@@ -1,0 +1,9 @@
+Cargo.lock
+.env
+/proxy.txt
+
+/target/
+/target-*/
+
+/kcordclient/data/*.sqlite3
+/kcordclient/data/*.sqlite
