@@ -19,14 +19,31 @@ detect_rc_file() {
   esac
 }
 
-append_once() {
+replace_block() {
   file=$1
-  line=$2
+  marker=$2
+  content=$3
+  tmp_file="${file}.kclient.tmp"
+  start="# >>> kclient $marker >>>"
+  end="# <<< kclient $marker <<<"
+
   mkdir -p "$(dirname -- "$file")"
   touch "$file"
-  if ! grep -Fqx "$line" "$file"; then
-    printf '%s\n' "$line" >> "$file"
-  fi
+
+  awk -v start="$start" -v end="$end" '
+    $0 == start { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ' "$file" > "$tmp_file"
+
+  {
+    cat "$tmp_file"
+    printf '%s\n' "$start"
+    printf '%s\n' "$content"
+    printf '%s\n' "$end"
+  } > "$file"
+
+  rm -f "$tmp_file"
 }
 
 install_linux_secret_service() {
@@ -62,10 +79,10 @@ configure_shell_path() {
 
   case "$shell_name" in
     fish)
-      append_once "$rc_file" "fish_add_path $install_dir"
+      replace_block "$rc_file" "path" "fish_add_path $install_dir"
       ;;
     *)
-      append_once "$rc_file" "export PATH=\"$install_dir:\$PATH\""
+      replace_block "$rc_file" "path" "export PATH=\"$install_dir:\$PATH\""
       ;;
   esac
 }
@@ -76,12 +93,12 @@ configure_linux_secret_service_startup() {
 
   case "$shell_name" in
     fish)
-      append_once "$rc_file" "if type -q gnome-keyring-daemon; and not set -q GNOME_KEYRING_CONTROL; eval (gnome-keyring-daemon --start --components=secrets | string replace -a ';' '' | string replace 'export ' 'set -gx '); end"
+      replace_block "$rc_file" "secret-service" "if type -q gnome-keyring-daemon; and not set -q GNOME_KEYRING_CONTROL; eval (gnome-keyring-daemon --start --components=secrets | string replace -a ';' '' | string replace 'export ' 'set -gx '); end"
       ;;
     *)
-      append_once "$rc_file" "if command -v gnome-keyring-daemon >/dev/null 2>&1 && [ -z \"\${GNOME_KEYRING_CONTROL:-}\" ]; then"
-      append_once "$rc_file" "  eval \"\$(gnome-keyring-daemon --start --components=secrets)\" >/dev/null"
-      append_once "$rc_file" "fi"
+      replace_block "$rc_file" "secret-service" "if command -v gnome-keyring-daemon >/dev/null 2>&1 && [ -z \"\${GNOME_KEYRING_CONTROL:-}\" ]; then
+  eval \"\$(gnome-keyring-daemon --start --components=secrets)\" >/dev/null
+fi"
       ;;
   esac
 }
