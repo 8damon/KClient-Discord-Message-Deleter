@@ -3,13 +3,10 @@ use anyhow::{Context, Result};
 #[cfg(windows)]
 use anyhow::anyhow;
 
-#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(not(test), target_os = "macos"))]
 use std::process::{Command, Output};
 
-#[cfg(all(target_os = "linux", not(test)))]
-use std::process::Stdio;
-
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, target_os = "macos"))]
 use std::{
     collections::HashMap,
     sync::{Mutex, OnceLock},
@@ -104,22 +101,22 @@ pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(not(test), target_os = "macos"))]
 const KEYRING_SERVICE: &str = "kcordclient";
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 const KEYRING_SENTINEL: &[u8] = b"keyring:v1";
 
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, target_os = "macos"))]
 static TEST_KEYRING: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub fn protect_string(account_key: &str, token: &str) -> Result<Vec<u8>> {
     store_platform_secret(account_key, token)?;
     Ok(KEYRING_SENTINEL.to_vec())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub fn unprotect_string(account_key: &str, blob: &[u8]) -> Result<String> {
     if blob == KEYRING_SENTINEL {
         return load_platform_secret(account_key);
@@ -128,7 +125,7 @@ pub fn unprotect_string(account_key: &str, blob: &[u8]) -> Result<String> {
     String::from_utf8(blob.to_vec()).context("failed to decode legacy token blob")
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
     if blob == KEYRING_SENTINEL {
         delete_platform_secret(account_key).ok();
@@ -136,22 +133,22 @@ pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn store_platform_secret(account_key: &str, token: &str) -> Result<()> {
     store_platform_secret_impl(account_key, token)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn load_platform_secret(account_key: &str) -> Result<String> {
     load_platform_secret_impl(account_key)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn delete_platform_secret(account_key: &str) -> Result<()> {
     delete_platform_secret_impl(account_key)
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, target_os = "macos"))]
 fn store_platform_secret_impl(account_key: &str, token: &str) -> Result<()> {
     let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
     keyring
@@ -161,7 +158,7 @@ fn store_platform_secret_impl(account_key: &str, token: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, target_os = "macos"))]
 fn load_platform_secret_impl(account_key: &str) -> Result<String> {
     let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
     keyring
@@ -172,7 +169,7 @@ fn load_platform_secret_impl(account_key: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("failed to load token from test keyring"))
 }
 
-#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(test, target_os = "macos"))]
 fn delete_platform_secret_impl(account_key: &str) -> Result<()> {
     let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
     keyring
@@ -231,64 +228,7 @@ fn delete_platform_secret_impl(account_key: &str) -> Result<()> {
     ensure_platform_success(output, "failed to delete token from macOS Keychain")
 }
 
-#[cfg(all(not(test), target_os = "linux"))]
-fn store_platform_secret_impl(account_key: &str, token: &str) -> Result<()> {
-    use std::io::Write;
-
-    let mut child = Command::new("secret-tool")
-        .args([
-            "store",
-            "--label",
-            "kcordclient token",
-            "service",
-            KEYRING_SERVICE,
-            "account",
-            account_key,
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context(
-            "failed to launch secret-tool; install a Secret Service provider and secret-tool",
-        )?;
-
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(token.as_bytes())
-            .context("failed writing token to secret-tool stdin")?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .context("failed waiting for secret-tool")?;
-
-    ensure_platform_success(output, "failed to store token in Linux Secret Service")
-}
-
-#[cfg(all(not(test), target_os = "linux"))]
-fn load_platform_secret_impl(account_key: &str) -> Result<String> {
-    let output = Command::new("secret-tool")
-        .args(["lookup", "service", KEYRING_SERVICE, "account", account_key])
-        .output()
-        .context(
-            "failed to launch secret-tool; install a Secret Service provider and secret-tool",
-        )?;
-    platform_stdout(output, "failed to load token from Linux Secret Service")
-}
-
-#[cfg(all(not(test), target_os = "linux"))]
-fn delete_platform_secret_impl(account_key: &str) -> Result<()> {
-    let output = Command::new("secret-tool")
-        .args(["clear", "service", KEYRING_SERVICE, "account", account_key])
-        .output()
-        .context(
-            "failed to launch secret-tool; install a Secret Service provider and secret-tool",
-        )?;
-    ensure_platform_success(output, "failed to delete token from Linux Secret Service")
-}
-
-#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(not(test), target_os = "macos"))]
 fn ensure_platform_success(output: Output, context: &str) -> Result<()> {
     if output.status.success() {
         Ok(())
@@ -302,7 +242,7 @@ fn ensure_platform_success(output: Output, context: &str) -> Result<()> {
     }
 }
 
-#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+#[cfg(all(not(test), target_os = "macos"))]
 fn platform_stdout(output: Output, context: &str) -> Result<String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -318,21 +258,6 @@ fn platform_stdout(output: Output, context: &str) -> Result<String> {
         .with_context(|| context.to_string())
 }
 
-#[cfg(all(not(test), target_os = "linux"))]
-fn platform_error_detail(_context: &str, stderr: &str) -> String {
-    if stderr.contains("org.freedesktop.secrets was not provided by any .service files") {
-        return format!(
-            "{stderr}. Install and start a Secret Service provider such as gnome-keyring, or rerun ./scripts/install.sh to set it up."
-        );
-    }
-
-    if stderr.is_empty() {
-        return String::from("unknown Linux secret-service failure");
-    }
-
-    stderr.to_string()
-}
-
 #[cfg(all(not(test), target_os = "macos"))]
 fn platform_error_detail(_context: &str, stderr: &str) -> String {
     if stderr.is_empty() {
@@ -340,6 +265,24 @@ fn platform_error_detail(_context: &str, stderr: &str) -> String {
     }
 
     stderr.to_string()
+}
+
+#[cfg(target_os = "linux")]
+pub fn protect_string(account_key: &str, token: &str) -> Result<Vec<u8>> {
+    let _ = account_key;
+    Ok(token.as_bytes().to_vec())
+}
+
+#[cfg(target_os = "linux")]
+pub fn unprotect_string(account_key: &str, blob: &[u8]) -> Result<String> {
+    let _ = account_key;
+    String::from_utf8(blob.to_vec()).context("failed to decode token")
+}
+
+#[cfg(target_os = "linux")]
+pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
+    let _ = (account_key, blob);
+    Ok(())
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
@@ -372,9 +315,9 @@ mod tests {
         assert_eq!(token, "token-abc");
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     #[test]
-    fn unix_secure_round_trip_uses_keyring_sentinel() {
+    fn macos_secure_round_trip_uses_keyring_sentinel() {
         let blob = protect_string("123", "token-abc").expect("store token");
         let token = unprotect_string("123", &blob).expect("load token");
 
@@ -382,9 +325,9 @@ mod tests {
         assert_eq!(token, "token-abc");
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     #[test]
-    fn unix_delete_protected_removes_stored_token() {
+    fn macos_delete_protected_removes_stored_token() {
         let blob = protect_string("123", "token-abc").expect("store token");
         delete_protected("123", &blob).expect("delete token");
         let error = unprotect_string("123", &blob).expect_err("token should be deleted");
@@ -392,10 +335,20 @@ mod tests {
         assert!(error.to_string().contains("test keyring"));
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     #[test]
-    fn unix_legacy_plaintext_blob_still_decodes() {
+    fn macos_legacy_plaintext_blob_still_decodes() {
         let token = unprotect_string("123", b"legacy-token").expect("decode legacy token");
         assert_eq!(token, "legacy-token");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_secure_round_trip_uses_local_blob() {
+        let blob = protect_string("123", "token-abc").expect("store token");
+        let token = unprotect_string("123", &blob).expect("load token");
+
+        assert_eq!(blob, b"token-abc");
+        assert_eq!(token, "token-abc");
     }
 }

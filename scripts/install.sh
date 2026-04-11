@@ -46,33 +46,6 @@ replace_block() {
   rm -f "$tmp_file"
 }
 
-install_linux_secret_service() {
-  if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get update
-    sudo apt-get install -y libsecret-tools gnome-keyring dbus-user-session
-    return 0
-  fi
-  if command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y libsecret gnome-keyring dbus-daemon
-    return 0
-  fi
-  if command -v pacman >/dev/null 2>&1; then
-    sudo pacman -Sy --noconfirm libsecret gnome-keyring dbus
-    return 0
-  fi
-  if command -v zypper >/dev/null 2>&1; then
-    sudo zypper --non-interactive install libsecret-tools gnome-keyring dbus-1
-    return 0
-  fi
-  if command -v apk >/dev/null 2>&1; then
-    sudo apk add libsecret gnome-keyring dbus
-    return 0
-  fi
-
-  printf 'Unsupported Linux package manager. Install libsecret-tools, gnome-keyring, and dbus-user-session manually.\n' >&2
-  exit 1
-}
-
 configure_shell_path() {
   rc_file=$1
   shell_name=$(basename -- "$shell_path")
@@ -83,22 +56,6 @@ configure_shell_path() {
       ;;
     *)
       replace_block "$rc_file" "path" "export PATH=\"$install_dir:\$PATH\""
-      ;;
-  esac
-}
-
-configure_linux_secret_service_startup() {
-  rc_file=$1
-  shell_name=$(basename -- "$shell_path")
-
-  case "$shell_name" in
-    fish)
-      replace_block "$rc_file" "secret-service" "if type -q gnome-keyring-daemon; and not set -q GNOME_KEYRING_CONTROL; eval (gnome-keyring-daemon --start --components=secrets | string replace -a ';' '' | string replace 'export ' 'set -gx '); end"
-      ;;
-    *)
-      replace_block "$rc_file" "secret-service" "if command -v gnome-keyring-daemon >/dev/null 2>&1 && [ -z \"\${GNOME_KEYRING_CONTROL:-}\" ]; then
-  eval \"\$(gnome-keyring-daemon --start --components=secrets)\" >/dev/null
-fi"
       ;;
   esac
 }
@@ -119,8 +76,7 @@ rc_file=$(detect_rc_file)
 
 case "$(uname -s)" in
   Linux)
-    install_linux_secret_service
-    configure_linux_secret_service_startup "$rc_file"
+    printf 'Linux install uses local token storage with filesystem permissions only.\n'
     ;;
   Darwin)
     printf 'macOS secure storage uses the built-in Keychain command-line tools.\n'
