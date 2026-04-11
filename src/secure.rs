@@ -293,10 +293,11 @@ fn ensure_platform_success(output: Output, context: &str) -> Result<()> {
     if output.status.success() {
         Ok(())
     } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         Err(anyhow::anyhow!(
             "{}: {}",
             context,
-            String::from_utf8_lossy(&output.stderr).trim()
+            platform_error_detail(context, &stderr)
         ))
     }
 }
@@ -304,16 +305,41 @@ fn ensure_platform_success(output: Output, context: &str) -> Result<()> {
 #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
 fn platform_stdout(output: Output, context: &str) -> Result<String> {
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(anyhow::anyhow!(
             "{}: {}",
             context,
-            String::from_utf8_lossy(&output.stderr).trim()
+            platform_error_detail(context, &stderr)
         ));
     }
 
     String::from_utf8(output.stdout)
         .map(|value| value.trim().to_string())
         .with_context(|| context.to_string())
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
+fn platform_error_detail(_context: &str, stderr: &str) -> String {
+    if stderr.contains("org.freedesktop.secrets was not provided by any .service files") {
+        return format!(
+            "{stderr}. Install and start a Secret Service provider such as gnome-keyring, or rerun ./scripts/install.sh to set it up."
+        );
+    }
+
+    if stderr.is_empty() {
+        return String::from("unknown Linux secret-service failure");
+    }
+
+    stderr.to_string()
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn platform_error_detail(_context: &str, stderr: &str) -> String {
+    if stderr.is_empty() {
+        return String::from("unknown macOS Keychain failure");
+    }
+
+    stderr.to_string()
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
