@@ -35,7 +35,25 @@ pub fn ensure_app_dirs() -> Result<()> {
 }
 
 pub fn uninstall_paths() -> Vec<PathBuf> {
-    vec![app_root_dir()]
+    let mut candidates = vec![app_root_dir()];
+
+    if let Ok(current_dir) = env::current_dir() {
+        candidates.push(current_dir.join(APP_DIR_NAME));
+    }
+
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(parent) = exe_path.parent() {
+            candidates.push(parent.join(APP_DIR_NAME));
+            if let Some(grandparent) = parent.parent() {
+                candidates.push(grandparent.join(APP_DIR_NAME));
+                if let Some(root) = grandparent.parent() {
+                    candidates.push(root.join(APP_DIR_NAME));
+                }
+            }
+        }
+    }
+
+    dedupe_paths(candidates)
 }
 
 fn preferred_data_dir() -> Option<PathBuf> {
@@ -61,4 +79,16 @@ fn preferred_data_dir() -> Option<PathBuf> {
     {
         None
     }
+}
+
+fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+
+    for path in paths {
+        if !unique.iter().any(|existing| existing == &path) {
+            unique.push(path);
+        }
+    }
+
+    unique
 }

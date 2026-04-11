@@ -183,6 +183,22 @@ pub fn remove_account(selector: &str) -> Result<StoredAccount> {
     Ok(account)
 }
 
+pub fn cleanup_account_secrets() -> Result<usize> {
+    initialize()?;
+    let accounts = list_accounts()?;
+    let mut removed = 0;
+
+    for account in accounts {
+        if let Some(token_blob) = load_token_blob(account.id)? {
+            if secure::delete_protected(&account.user_id, &token_blob).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+
+    Ok(removed)
+}
+
 pub fn upsert_checkpoint(
     channel_id: &str,
     cutoff_key: &str,

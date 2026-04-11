@@ -217,6 +217,15 @@ fn write_log(report: &RunReport) -> Result<PathBuf> {
 
 fn uninstall_local_state() -> Result<()> {
     let mut removed_any = false;
+    let cleared_secrets = storage::cleanup_account_secrets().unwrap_or(0);
+
+    if cleared_secrets > 0 {
+        terminal::plain(format!(
+            "Cleared {} stored token entrie(s).",
+            cleared_secrets
+        ));
+        removed_any = true;
+    }
 
     for path in paths::uninstall_paths() {
         if path.exists() {
@@ -228,11 +237,11 @@ fn uninstall_local_state() -> Result<()> {
     }
 
     if !removed_any {
-        terminal::plain("No local kcordclient data was present.");
+        terminal::plain("No local kcordclient data or stored token entries were present.");
     }
 
     terminal::plain(
-        "Uninstall complete. Remove the executable itself from its install location if needed.",
+        "Uninstall complete. Run the platform uninstall script if you also want the installed binary removed.",
     );
     Ok(())
 }
