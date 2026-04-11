@@ -1,5 +1,13 @@
 # KCLIENT
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white&style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white&style=for-the-badge" />
+  <img src="https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white&style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black&style=for-the-badge" />
+  <img src="https://img.shields.io/github/actions/workflow/status/8damon/KClient-Discord-Message-Deleter/ci.yml?branch=stable&style=for-the-badge&label=CI" />
+</p>
+
 ## OVERVIEW
 
 `kclient` is a CLI for deleting your own Discord messages from a DM, a single channel, or every text channel in a server. It supports stored accounts, checkpointed runs, proxy rotation, rate-limit visibility, and plain command-line workflows without a web UI or `.env` file.
