@@ -4,7 +4,10 @@ use anyhow::{Context, Result};
 use anyhow::anyhow;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
+
+#[cfg(all(target_os = "linux", not(test)))]
+use std::process::Stdio;
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 use std::{
@@ -135,157 +138,154 @@ pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn store_platform_secret(account_key: &str, token: &str) -> Result<()> {
-    #[cfg(test)]
-    {
-        let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
-        keyring
-            .lock()
-            .expect("lock test keyring")
-            .insert(account_key.to_string(), token.to_string());
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("security")
-            .args([
-                "add-generic-password",
-                "-a",
-                account_key,
-                "-s",
-                KEYRING_SERVICE,
-                "-w",
-                token,
-                "-U",
-            ])
-            .output()
-            .context("failed to launch macOS Keychain command")?;
-        return ensure_platform_success(output, "failed to store token in macOS Keychain");
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::io::Write;
-
-        let mut child = Command::new("secret-tool")
-            .args([
-                "store",
-                "--label",
-                "kcordclient token",
-                "service",
-                KEYRING_SERVICE,
-                "account",
-                account_key,
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .context(
-                "failed to launch secret-tool; install a Secret Service provider and secret-tool",
-            )?;
-
-        if let Some(stdin) = child.stdin.as_mut() {
-            stdin
-                .write_all(token.as_bytes())
-                .context("failed writing token to secret-tool stdin")?;
-        }
-
-        let output = child
-            .wait_with_output()
-            .context("failed waiting for secret-tool")?;
-
-        return ensure_platform_success(output, "failed to store token in Linux Secret Service");
-    }
-
-    #[allow(unreachable_code)]
-    Ok(())
+    store_platform_secret_impl(account_key, token)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn load_platform_secret(account_key: &str) -> Result<String> {
-    #[cfg(test)]
-    {
-        let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
-        return keyring
-            .lock()
-            .expect("lock test keyring")
-            .get(account_key)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("failed to load token from test keyring"));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("security")
-            .args([
-                "find-generic-password",
-                "-a",
-                account_key,
-                "-s",
-                KEYRING_SERVICE,
-                "-w",
-            ])
-            .output()
-            .context("failed to launch macOS Keychain command")?;
-        return platform_stdout(output, "failed to load token from macOS Keychain");
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let output = Command::new("secret-tool")
-            .args(["lookup", "service", KEYRING_SERVICE, "account", account_key])
-            .output()
-            .context(
-                "failed to launch secret-tool; install a Secret Service provider and secret-tool",
-            )?;
-        return platform_stdout(output, "failed to load token from Linux Secret Service");
-    }
-
-    #[allow(unreachable_code)]
-    unreachable!()
+    load_platform_secret_impl(account_key)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn delete_platform_secret(account_key: &str) -> Result<()> {
-    #[cfg(test)]
-    {
-        let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
-        keyring
-            .lock()
-            .expect("lock test keyring")
-            .remove(account_key);
-        return Ok(());
-    }
+    delete_platform_secret_impl(account_key)
+}
 
-    #[cfg(target_os = "macos")]
-    {
-        let output = Command::new("security")
-            .args([
-                "delete-generic-password",
-                "-a",
-                account_key,
-                "-s",
-                KEYRING_SERVICE,
-            ])
-            .output()
-            .context("failed to launch macOS Keychain command")?;
-        return ensure_platform_success(output, "failed to delete token from macOS Keychain");
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let output = Command::new("secret-tool")
-            .args(["clear", "service", KEYRING_SERVICE, "account", account_key])
-            .output()
-            .context(
-                "failed to launch secret-tool; install a Secret Service provider and secret-tool",
-            )?;
-        return ensure_platform_success(output, "failed to delete token from Linux Secret Service");
-    }
-
-    #[allow(unreachable_code)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn store_platform_secret_impl(account_key: &str, token: &str) -> Result<()> {
+    let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
+    keyring
+        .lock()
+        .expect("lock test keyring")
+        .insert(account_key.to_string(), token.to_string());
     Ok(())
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn load_platform_secret_impl(account_key: &str) -> Result<String> {
+    let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
+    keyring
+        .lock()
+        .expect("lock test keyring")
+        .get(account_key)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("failed to load token from test keyring"))
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+fn delete_platform_secret_impl(account_key: &str) -> Result<()> {
+    let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
+    keyring
+        .lock()
+        .expect("lock test keyring")
+        .remove(account_key);
+    Ok(())
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn store_platform_secret_impl(account_key: &str, token: &str) -> Result<()> {
+    let output = Command::new("security")
+        .args([
+            "add-generic-password",
+            "-a",
+            account_key,
+            "-s",
+            KEYRING_SERVICE,
+            "-w",
+            token,
+            "-U",
+        ])
+        .output()
+        .context("failed to launch macOS Keychain command")?;
+    ensure_platform_success(output, "failed to store token in macOS Keychain")
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn load_platform_secret_impl(account_key: &str) -> Result<String> {
+    let output = Command::new("security")
+        .args([
+            "find-generic-password",
+            "-a",
+            account_key,
+            "-s",
+            KEYRING_SERVICE,
+            "-w",
+        ])
+        .output()
+        .context("failed to launch macOS Keychain command")?;
+    platform_stdout(output, "failed to load token from macOS Keychain")
+}
+
+#[cfg(all(not(test), target_os = "macos"))]
+fn delete_platform_secret_impl(account_key: &str) -> Result<()> {
+    let output = Command::new("security")
+        .args([
+            "delete-generic-password",
+            "-a",
+            account_key,
+            "-s",
+            KEYRING_SERVICE,
+        ])
+        .output()
+        .context("failed to launch macOS Keychain command")?;
+    ensure_platform_success(output, "failed to delete token from macOS Keychain")
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
+fn store_platform_secret_impl(account_key: &str, token: &str) -> Result<()> {
+    use std::io::Write;
+
+    let mut child = Command::new("secret-tool")
+        .args([
+            "store",
+            "--label",
+            "kcordclient token",
+            "service",
+            KEYRING_SERVICE,
+            "account",
+            account_key,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context(
+            "failed to launch secret-tool; install a Secret Service provider and secret-tool",
+        )?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(token.as_bytes())
+            .context("failed writing token to secret-tool stdin")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .context("failed waiting for secret-tool")?;
+
+    ensure_platform_success(output, "failed to store token in Linux Secret Service")
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
+fn load_platform_secret_impl(account_key: &str) -> Result<String> {
+    let output = Command::new("secret-tool")
+        .args(["lookup", "service", KEYRING_SERVICE, "account", account_key])
+        .output()
+        .context(
+            "failed to launch secret-tool; install a Secret Service provider and secret-tool",
+        )?;
+    platform_stdout(output, "failed to load token from Linux Secret Service")
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
+fn delete_platform_secret_impl(account_key: &str) -> Result<()> {
+    let output = Command::new("secret-tool")
+        .args(["clear", "service", KEYRING_SERVICE, "account", account_key])
+        .output()
+        .context(
+            "failed to launch secret-tool; install a Secret Service provider and secret-tool",
+        )?;
+    ensure_platform_success(output, "failed to delete token from Linux Secret Service")
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -313,7 +313,7 @@ fn platform_stdout(output: Output, context: &str) -> Result<String> {
 
     String::from_utf8(output.stdout)
         .map(|value| value.trim().to_string())
-        .context(context)
+        .with_context(|| context.to_string())
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
