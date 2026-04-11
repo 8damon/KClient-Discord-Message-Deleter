@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{models::OwnedMessage, paths, secure};
 
 const DB_NAME: &str = "kcordclient.sqlite3";
+const DB_PATH_OVERRIDE: &str = "KCLIENT_DB_PATH";
 
 static DB_PATH: OnceLock<PathBuf> = OnceLock::new();
 
@@ -43,7 +44,7 @@ struct PersistedMessage {
 
 pub fn initialize() -> Result<()> {
     paths::ensure_app_dirs()?;
-    let db_path = DB_PATH.get_or_init(default_db_path).clone();
+    let db_path = current_db_path();
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create data dir {}", parent.display()))?;
@@ -305,9 +306,16 @@ fn default_db_path() -> PathBuf {
     paths::data_dir().join(DB_NAME)
 }
 
+fn current_db_path() -> PathBuf {
+    if let Some(path) = std::env::var_os(DB_PATH_OVERRIDE) {
+        return PathBuf::from(path);
+    }
+    DB_PATH.get_or_init(default_db_path).clone()
+}
+
 fn open() -> Result<Connection> {
-    let path = DB_PATH.get_or_init(default_db_path);
-    Connection::open(path).with_context(|| format!("failed to open database {}", path.display()))
+    let path = current_db_path();
+    Connection::open(&path).with_context(|| format!("failed to open database {}", path.display()))
 }
 
 fn map_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredAccount> {
@@ -372,4 +380,79 @@ fn mark_account_used(account_id: i64) -> Result<()> {
         params![account_id, Local::now().to_rfc3339()],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::{Mutex, OnceLock},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+
+    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[test]
+    fn initialize_creates_database_in_overridden_location() {
+        let _guard = TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock test env");
+        let sandbox = unique_test_dir("storage-init");
+        let app_root = sandbox.join("app-root");
+        let db_path = sandbox.join("db").join("kcordclient.sqlite3");
+
+        fs::create_dir_all(&sandbox).expect("create sandbox");
+        std::env::set_var("KCLIENT_APP_ROOT", &app_root);
+        std::env::set_var("KCLIENT_DB_PATH", &db_path);
+
+        initialize().expect("initialize storage");
+
+        assert!(app_root.is_dir(), "app root should exist");
+        assert!(app_root.join("data").exists() || db_path.parent().is_some());
+        assert!(db_path.is_file(), "database file should exist");
+
+        std::env::remove_var("KCLIENT_APP_ROOT");
+        std::env::remove_var("KCLIENT_DB_PATH");
+        fs::remove_dir_all(&sandbox).ok();
+    }
+
+    #[test]
+    fn save_and_resolve_account_round_trip() {
+        let _guard = TEST_ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock test env");
+        let sandbox = unique_test_dir("storage-account");
+        let app_root = sandbox.join("app-root");
+        let db_path = sandbox.join("db").join("kcordclient.sqlite3");
+
+        fs::create_dir_all(&sandbox).expect("create sandbox");
+        std::env::set_var("KCLIENT_APP_ROOT", &app_root);
+        std::env::set_var("KCLIENT_DB_PATH", &db_path);
+
+        let saved =
+            save_account("123", "damon", Some("8damon"), "token-abc").expect("save account");
+        let resolved = resolve_account(Some("damon")).expect("resolve account");
+
+        assert_eq!(saved.user_id, "123");
+        assert_eq!(resolved.account.user_id, "123");
+        assert_eq!(resolved.account.username, "damon");
+        assert_eq!(resolved.token, "token-abc");
+
+        std::env::remove_var("KCLIENT_APP_ROOT");
+        std::env::remove_var("KCLIENT_DB_PATH");
+        fs::remove_dir_all(&sandbox).ok();
+    }
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time ok")
+            .as_nanos();
+        std::env::temp_dir().join(format!("kclient-{prefix}-{}-{stamp}", std::process::id()))
+    }
 }

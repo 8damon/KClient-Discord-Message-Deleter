@@ -77,3 +77,63 @@ fn default_concurrency() -> usize {
         .map(|count| count.get().saturating_mul(2))
         .unwrap_or(8)
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Args;
+
+    #[test]
+    fn parses_delete_command_with_timeframe() {
+        let args = Args::try_parse_from([
+            "kclient",
+            "--account",
+            "damon",
+            "--delete",
+            "--server",
+            "123",
+            "--tf",
+            "24h",
+        ])
+        .expect("parse delete args");
+
+        assert_eq!(args.account.as_deref(), Some("damon"));
+        assert!(args.delete);
+        assert_eq!(args.server.as_deref(), Some("123"));
+        assert_eq!(args.tf.as_deref(), Some("24h"));
+        assert!(!args.all);
+    }
+
+    #[test]
+    fn rejects_conflicting_target_flags() {
+        let error = Args::try_parse_from([
+            "kclient",
+            "--delete",
+            "--server",
+            "123",
+            "--channel",
+            "456",
+            "--all",
+        ])
+        .expect_err("target flags should conflict");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn rejects_conflicting_timeframe_flags() {
+        let error = Args::try_parse_from([
+            "kclient",
+            "--delete",
+            "--channel",
+            "456",
+            "--tf",
+            "24h",
+            "--all",
+        ])
+        .expect_err("timeframe flags should conflict");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+}

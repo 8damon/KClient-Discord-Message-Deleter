@@ -6,8 +6,12 @@ use std::{
 use anyhow::{Context, Result};
 
 const APP_DIR_NAME: &str = "kcordclient";
+const APP_ROOT_OVERRIDE: &str = "KCLIENT_APP_ROOT";
 
 pub fn app_root_dir() -> PathBuf {
+    if let Some(dir) = env::var_os(APP_ROOT_OVERRIDE) {
+        return PathBuf::from(dir);
+    }
     if let Some(dir) = preferred_data_dir() {
         return dir.join(APP_DIR_NAME);
     }

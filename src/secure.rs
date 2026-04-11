@@ -6,6 +6,12 @@ use anyhow::anyhow;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Command, Output, Stdio};
 
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
+
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::{LocalFree, HLOCAL},
@@ -101,6 +107,9 @@ const KEYRING_SERVICE: &str = "kcordclient";
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const KEYRING_SENTINEL: &[u8] = b"keyring:v1";
 
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+static TEST_KEYRING: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn protect_string(account_key: &str, token: &str) -> Result<Vec<u8>> {
     store_platform_secret(account_key, token)?;
@@ -126,6 +135,16 @@ pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn store_platform_secret(account_key: &str, token: &str) -> Result<()> {
+    #[cfg(test)]
+    {
+        let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
+        keyring
+            .lock()
+            .expect("lock test keyring")
+            .insert(account_key.to_string(), token.to_string());
+        return Ok(());
+    }
+
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("security")
@@ -185,6 +204,17 @@ fn store_platform_secret(account_key: &str, token: &str) -> Result<()> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn load_platform_secret(account_key: &str) -> Result<String> {
+    #[cfg(test)]
+    {
+        let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
+        return keyring
+            .lock()
+            .expect("lock test keyring")
+            .get(account_key)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("failed to load token from test keyring"));
+    }
+
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("security")
@@ -218,6 +248,16 @@ fn load_platform_secret(account_key: &str) -> Result<String> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn delete_platform_secret(account_key: &str) -> Result<()> {
+    #[cfg(test)]
+    {
+        let keyring = TEST_KEYRING.get_or_init(|| Mutex::new(HashMap::new()));
+        keyring
+            .lock()
+            .expect("lock test keyring")
+            .remove(account_key);
+        return Ok(());
+    }
+
     #[cfg(target_os = "macos")]
     {
         let output = Command::new("security")
@@ -292,4 +332,44 @@ pub fn unprotect_string(account_key: &str, blob: &[u8]) -> Result<String> {
 pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
     let _ = (account_key, blob);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_secure_round_trip_works() {
+        let blob = protect_string("123", "token-abc").expect("protect token");
+        let token = unprotect_string("123", &blob).expect("unprotect token");
+        assert_eq!(token, "token-abc");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn unix_secure_round_trip_uses_keyring_sentinel() {
+        let blob = protect_string("123", "token-abc").expect("store token");
+        let token = unprotect_string("123", &blob).expect("load token");
+
+        assert_eq!(blob, KEYRING_SENTINEL);
+        assert_eq!(token, "token-abc");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn unix_delete_protected_removes_stored_token() {
+        let blob = protect_string("123", "token-abc").expect("store token");
+        delete_protected("123", &blob).expect("delete token");
+        let error = unprotect_string("123", &blob).expect_err("token should be deleted");
+
+        assert!(error.to_string().contains("test keyring"));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn unix_legacy_plaintext_blob_still_decodes() {
+        let token = unprotect_string("123", b"legacy-token").expect("decode legacy token");
+        assert_eq!(token, "legacy-token");
+    }
 }
