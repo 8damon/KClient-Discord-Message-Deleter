@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 #[cfg(windows)]
 use anyhow::anyhow;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
 use std::process::{Command, Output};
 
 #[cfg(all(target_os = "linux", not(test)))]
@@ -104,7 +104,7 @@ pub fn delete_protected(account_key: &str, blob: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
 const KEYRING_SERVICE: &str = "kcordclient";
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -288,7 +288,7 @@ fn delete_platform_secret_impl(account_key: &str) -> Result<()> {
     ensure_platform_success(output, "failed to delete token from Linux Secret Service")
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
 fn ensure_platform_success(output: Output, context: &str) -> Result<()> {
     if output.status.success() {
         Ok(())
@@ -301,7 +301,7 @@ fn ensure_platform_success(output: Output, context: &str) -> Result<()> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
 fn platform_stdout(output: Output, context: &str) -> Result<String> {
     if !output.status.success() {
         return Err(anyhow::anyhow!(
