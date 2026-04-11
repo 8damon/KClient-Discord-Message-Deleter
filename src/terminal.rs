@@ -4,7 +4,7 @@ use std::{
 };
 
 use chrono::Local;
-use console::Term;
+use console::{Style, Term};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::state;
@@ -118,11 +118,11 @@ pub fn set_progress_root(progress_root: Option<Arc<MultiProgress>>) {
 }
 
 pub fn info(target: &str, message: impl AsRef<str>) {
-    emit("INFO", "\x1b[32m", target, message.as_ref());
+    emit("INFO", Style::new().green(), target, message.as_ref());
 }
 
 pub fn warn(target: &str, message: impl AsRef<str>) {
-    emit("WARN", "\x1b[33m", target, message.as_ref());
+    emit("WARN", Style::new().yellow(), target, message.as_ref());
 }
 
 pub fn plain(message: impl AsRef<str>) {
@@ -160,19 +160,21 @@ pub fn set_rate_limit_graph_enabled(enabled: bool) {
     }
 }
 
-fn emit(level: &str, color: &str, target: &str, message: &str) {
-    let line = format!(
-        "[\x1b[2m{}\x1b[0m {}{:>5}\x1b[0m \x1b[2m{}\x1b[0m] {}",
-        Local::now().format("%Y-%m-%d %H:%M:%S"),
-        color,
-        level,
-        target,
+fn emit(level: &str, level_style: Style, target: &str, message: &str) {
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let plain_line = format!("[{} {:>5} {}] {}", timestamp, level, target, message);
+    state::push_log(&plain_line);
+
+    let rendered_line = format!(
+        "[{} {} {}] {}",
+        Style::new().dim().apply_to(&timestamp),
+        level_style.apply_to(format!("{:>5}", level)),
+        Style::new().dim().apply_to(target),
         message
     );
-    state::push_log(&line);
 
-    if !print_via_progress(&line) {
-        println!("{}", line);
+    if !print_via_progress(&rendered_line) {
+        println!("{}", rendered_line);
     }
 }
 
