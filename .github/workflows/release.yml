@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Release Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: kclient-linux-x86_64
+            binary_path: target/release/kclient
+            asset_name: kclient-linux-x86_64
+          - os: macos-latest
+            artifact_name: kclient-macos-x86_64
+            binary_path: target/release/kclient
+            asset_name: kclient-macos-x86_64
+          - os: windows-latest
+            artifact_name: kclient-windows-x86_64
+            binary_path: target/release/kclient.exe
+            asset_name: kclient-windows-x86_64.exe
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --bin kclient
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.binary_path }}
+
+      - name: Publish release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.binary_path }}
