@@ -138,8 +138,22 @@ pub fn resolve_account(selector: Option<&str>) -> Result<StoredAccountToken> {
         Some(value) => find_account_by_selector(accounts, value)?,
         None => match accounts.as_slice() {
             [only] => only.clone(),
-            [] => return Err(anyhow!("no stored accounts; store one with `kclient --add-account --token TOKEN_HERE` or pass --token for a one-off run")),
-            _ => return Err(anyhow!("multiple stored accounts; select one with --account <username|user_id>")),
+            [] => {
+                return Err(anyhow!(
+                    "no stored accounts.\n\
+store one first with:\n\
+  kclient --add-account --token TOKEN_HERE\n\
+or run once without storing with:\n\
+  kclient --token TOKEN_HERE --delete --channel CHANNEL_ID --tf 24h"
+                ))
+            }
+            _ => {
+                return Err(anyhow!(
+                    "multiple stored accounts found.\n\
+pick one with:\n\
+  kclient --account USERNAME_OR_USER_ID --delete --server SERVER_ID --tf 24h"
+                ))
+            }
         },
     };
 

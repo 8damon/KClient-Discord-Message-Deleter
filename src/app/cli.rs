@@ -48,5 +48,5 @@ pub(crate) fn print_cli_help() -> Result<()> {
 }
 
 fn help_tips() -> &'static str {
-    "TIPS:\n  STORE AN ACCOUNT: kclient --add-account --token TOKEN_HERE\n  REMOVE AN ACCOUNT: kclient --remove-account --account myuser\n  ONE-OFF RUN WITH TOKEN: kclient --token TOKEN_HERE --delete --channel CHANNEL_ID --tf 24h\n  USE A STORED ACCOUNT: kclient --account myuser --delete --server SERVER_ID --all"
+    "TIPS:\n  COMMANDS USE DOUBLE DASHES FOR LONG OPTIONS: --token VALUE  --server VALUE  --tf VALUE\n  SINGLE DASHES ARE ONLY FOR SHORT OPTIONS LIKE -h OR -V\n  COPY THIS EXACTLY TO STORE AN ACCOUNT:\n    kclient --add-account --token TOKEN_HERE\n  COPY THIS EXACTLY TO DELETE THE LAST 24 HOURS FROM A SERVER WITH A STORED ACCOUNT:\n    kclient --account myuser --delete --server SERVER_ID --tf 24h\n  COPY THIS EXACTLY TO RUN ONCE WITHOUT STORING THE TOKEN:\n    kclient --token TOKEN_HERE --delete --channel CHANNEL_ID --tf 24h\n  COPY THIS EXACTLY TO REMOVE A STORED ACCOUNT:\n    kclient --remove-account --account myuser"
 }

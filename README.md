@@ -14,6 +14,28 @@
 - Proxy rotation with `proxy.txt`
 - Local logs for each run
 
+## QUICK START
+
+If you are new to command-line tools, copy one command exactly and replace only the obvious placeholders like `TOKEN_HERE`, `SERVER_ID`, or `CHANNEL_ID`.
+
+Store an account first:
+
+```bash
+kclient --add-account --token TOKEN_HERE
+```
+
+Then delete the last 24 hours from a server:
+
+```bash
+kclient --account myuser --delete --server SERVER_ID --tf 24h
+```
+
+Run once without storing the token:
+
+```bash
+kclient --token TOKEN_HERE --delete --channel CHANNEL_ID --tf 24h
+```
+
 ## PLATFORM SUPPORT
 
 - Windows is the primary verified platform in this workspace.
@@ -27,6 +49,14 @@ cargo build --release --bin kclient
 ```
 
 The release binary is written to `target/release/kclient.exe` on Windows and `target/release/kclient` on Linux and macOS.
+
+## CLI BASICS
+
+- `--something` is a long option. Example: `--token TOKEN_HERE`
+- `-h` and `-V` are short options
+- Most options take a value after them. Example: `--server 123456789012345678`
+- Flags without values are switches. Example: `--delete`, `--all`, `--reload`
+- Do not type angle brackets. Replace placeholders directly. Use `TOKEN_HERE`, `SERVER_ID`, and `CHANNEL_ID` as examples only.
 
 ## ACCOUNT MANAGEMENT
 
@@ -107,6 +137,8 @@ Run logs are written to the `logs` subdirectory inside that app directory.
 - If you do not pass `--token`, `kclient` uses a stored account.
 - If multiple accounts are stored, pass `--account`.
 - `--reload` clears saved checkpoints before starting a run.
+- If you are unsure, start with `kclient --add-account --token TOKEN_HERE`
+- Then use `kclient --account myuser --delete --server SERVER_ID --tf 24h`
 
 ## UNINSTALL
 

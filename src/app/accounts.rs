@@ -62,7 +62,13 @@ pub(crate) fn resolve_token_for_cli(args: &Args) -> Result<(String, Option<Strin
     }
 
     Err(anyhow!(
-        "no stored accounts found; use --token for a one-off run or store one with `kclient --add-account --token TOKEN_HERE`"
+        "no stored accounts found.\n\
+use one of these exact commands:\n\
+  kclient --add-account --token TOKEN_HERE\n\
+  kclient --token TOKEN_HERE --delete --server SERVER_ID --tf 24h\n\
+rules:\n\
+  use double dashes like --token and --server\n\
+  put the value after the option name"
     ))
 }
 
