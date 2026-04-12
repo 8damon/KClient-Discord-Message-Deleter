@@ -1,4 +1,7 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
+
+#[cfg(windows)]
+use anyhow::anyhow;
 
 #[cfg(windows)]
 use windows_sys::Win32::{
