@@ -24,6 +24,15 @@ Store an account first:
 kclient --add-account --token TOKEN_HERE
 ```
 
+If you do not know how to get your token:
+
+- Go to Discord on the web
+- Press `Ctrl+Shift+I`
+- Open `Application`
+- Open `Local Storage`
+- Filter for `token`
+- Copy the value
+
 Then delete the last 24 hours from a server:
 
 ```bash
