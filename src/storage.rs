@@ -94,7 +94,9 @@ pub fn save_account(
 ) -> Result<StoredAccount> {
     initialize()?;
     let now = Local::now().to_rfc3339();
-    let encrypted = secure::protect_string(token)?;
+    let previous = find_account_by_user_id(user_id)?
+        .and_then(|account| load_token_blob(account.id).ok().flatten());
+    let encrypted = secure::protect_string(user_id, token)?;
     let conn = open()?;
     conn.execute(
         "
@@ -109,6 +111,9 @@ pub fn save_account(
         params![user_id, username, display_name, encrypted, now],
     )
     .context("failed to save account")?;
+    if let Some(previous_blob) = previous.as_deref() {
+        secure::delete_protected(user_id, previous_blob).ok();
+    }
     find_account_by_user_id(user_id)?
         .ok_or_else(|| anyhow!("saved account but failed to reload it"))
 }
@@ -161,15 +166,17 @@ pick one with:\n\
         .ok_or_else(|| anyhow!("account {} has no token blob", account.user_id))?;
     mark_account_used(account.id)?;
 
-    Ok(StoredAccountToken {
-        account,
-        token: secure::unprotect_string(&token_blob)?,
-    })
+    let token = secure::unprotect_string(&account.user_id, &token_blob)?;
+
+    Ok(StoredAccountToken { account, token })
 }
 
 pub fn remove_account(selector: &str) -> Result<StoredAccount> {
     initialize()?;
     let account = find_account_by_selector(list_accounts()?, selector)?;
+    if let Some(token_blob) = load_token_blob(account.id)? {
+        secure::delete_protected(&account.user_id, &token_blob).ok();
+    }
     let conn = open()?;
     conn.execute("DELETE FROM accounts WHERE id = ?1", params![account.id])
         .with_context(|| format!("failed to remove account {}", account.user_id))?;
