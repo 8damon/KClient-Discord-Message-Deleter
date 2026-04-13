@@ -55,21 +55,23 @@ fn help_tips() -> String {
     let note = Style::new().bold().magenta();
 
     format!(
-        "{tips}\n  {double_dash}: {double_dash_body}\n  {single_dash}: {single_dash_body}\n  {store}\n    {store_cmd}\n  {token_note}\n    {token_note_body}\n  {server_delete}\n    {server_delete_cmd}\n  {one_off}\n    {one_off_cmd}\n  {remove}\n    {remove_cmd}",
-        tips = heading.apply_to("TIPS"),
-        double_dash = label.apply_to("LONG OPTIONS USE DOUBLE DASHES"),
+        "{tips}\n  {double_dash}: {double_dash_body}\n  {single_dash}: {single_dash_body}\n  {store}\n    {store_cmd}\n  {token_note}\n    {token_note_body}\n  {id_note}\n    {id_note_body}\n  {server_delete}\n    {server_delete_cmd}\n  {one_off}\n    {one_off_cmd}\n  {remove}\n    {remove_cmd}",
+        tips = heading.apply_to("Tips"),
+        double_dash = label.apply_to("Long options use double dashes"),
         double_dash_body = "--token VALUE  --server VALUE  --tf VALUE",
-        single_dash = label.apply_to("SHORT OPTIONS USE A SINGLE DASH"),
+        single_dash = label.apply_to("Short options use a single dash"),
         single_dash_body = "-h  -V",
-        store = label.apply_to("COPY THIS EXACTLY TO STORE AN ACCOUNT"),
+        store = label.apply_to("Copy this exactly to store an account"),
         store_cmd = command.apply_to("kclient --add-account --token TOKEN_HERE"),
-        token_note = note.apply_to("IF YOU DO NOT KNOW HOW TO GET YOUR TOKEN"),
-        token_note_body = "DISCORD WEB -> CTRL+SHIFT+I -> APPLICATION -> LOCAL STORAGE -> FILTER \"token\" -> COPY VALUE",
-        server_delete = label.apply_to("COPY THIS EXACTLY TO DELETE THE LAST 24 HOURS FROM A SERVER WITH A STORED ACCOUNT"),
+        token_note = note.apply_to("If you do not know how to get your token"),
+        token_note_body = "Discord web -> Ctrl+Shift+I -> Application -> Local Storage -> filter \"token\" -> copy value",
+        id_note = note.apply_to("If you do not know how to get a user ID or server ID"),
+        id_note_body = "Discord -> User Settings -> Advanced -> turn on Developer Mode -> right-click user or server icon -> Copy User ID or Copy Server ID",
+        server_delete = label.apply_to("Copy this exactly to delete the last 24 hours from a server with a stored account"),
         server_delete_cmd = command.apply_to("kclient --account myuser --delete --server SERVER_ID --tf 24h"),
-        one_off = label.apply_to("COPY THIS EXACTLY TO RUN ONCE WITHOUT STORING THE TOKEN"),
+        one_off = label.apply_to("Copy this exactly to run once without storing the token"),
         one_off_cmd = command.apply_to("kclient --token TOKEN_HERE --delete --channel CHANNEL_ID --tf 24h"),
-        remove = label.apply_to("COPY THIS EXACTLY TO REMOVE A STORED ACCOUNT"),
+        remove = label.apply_to("Copy this exactly to remove a stored account"),
         remove_cmd = command.apply_to("kclient --remove-account --account myuser"),
     )
 }

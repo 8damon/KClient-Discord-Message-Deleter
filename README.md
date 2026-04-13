@@ -41,6 +41,15 @@ If you do not know how to get your token:
 - Filter for `token`
 - Copy the value
 
+If you do not know how to get a user ID or server ID:
+
+- Open Discord
+- Click the gear icon for `User Settings`
+- Open `Advanced`
+- Turn on `Developer Mode`
+- Right-click the user you want for a DM and click `Copy User ID`
+- Right-click the server icon and click `Copy Server ID`
+
 Then delete the last 24 hours from a server:
 
 ```bash
@@ -74,6 +83,21 @@ The release binary is written to `target/release/kclient.exe` on Windows and `ta
 - Most options take a value after them. Example: `--server 123456789012345678`
 - Flags without values are switches. Example: `--delete`, `--all`, `--reload`
 - Do not type angle brackets. Replace placeholders directly. Use `TOKEN_HERE`, `SERVER_ID`, and `CHANNEL_ID` as examples only.
+
+## FINDING IDS
+
+If Discord does not show copy-ID options yet, enable Developer Mode first:
+
+- Open Discord
+- Click the gear icon for `User Settings`
+- Open `Advanced`
+- Turn on `Developer Mode`
+
+Then copy the ID you need:
+
+- For a DM target, right-click the user and click `Copy User ID`
+- For a server target, right-click the server icon and click `Copy Server ID`
+- For a channel target, right-click the channel and click `Copy Channel ID`
 
 ## ACCOUNT MANAGEMENT
 
