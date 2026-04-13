@@ -50,6 +50,16 @@ pub enum DeleteProgress {
     Skipped(SkippedDelete),
 }
 
+struct DeleteRetryContext<'a> {
+    channel_id: &'a str,
+    display_name: &'a str,
+    message_id: &'a str,
+    attempt: usize,
+    max_attempts: usize,
+    wait_secs: f64,
+    progress: Option<&'a ProgressBar>,
+}
+
 pub struct DiscordClient {
     pool: Vec<Client>,
     pool_next: AtomicUsize,
@@ -446,14 +456,16 @@ impl DiscordClient {
                         self.record_delete_rate_limit(channel_id, aggressive, wait)
                             .await;
                         log_delete_retry(
-                            channel_id,
-                            display_name,
-                            message_id,
-                            attempts,
-                            MAX_DELETE_ATTEMPTS,
-                            wait,
+                            DeleteRetryContext {
+                                channel_id,
+                                display_name,
+                                message_id,
+                                attempt: attempts,
+                                max_attempts: MAX_DELETE_ATTEMPTS,
+                                wait_secs: wait,
+                                progress,
+                            },
                             &format!("{:#}", error),
-                            progress,
                         );
                         tokio::time::sleep(StdDuration::from_secs_f64(wait)).await;
                         continue;
@@ -487,14 +499,16 @@ impl DiscordClient {
                             ));
                         }
                         log_delete_retry(
-                            channel_id,
-                            display_name,
-                            message_id,
-                            attempts,
-                            MAX_DELETE_ATTEMPTS,
-                            wait,
+                            DeleteRetryContext {
+                                channel_id,
+                                display_name,
+                                message_id,
+                                attempt: attempts,
+                                max_attempts: MAX_DELETE_ATTEMPTS,
+                                wait_secs: wait,
+                                progress,
+                            },
                             "rate limited",
-                            progress,
                         );
                         tokio::time::sleep(StdDuration::from_secs_f64(wait)).await;
                     }
@@ -507,14 +521,16 @@ impl DiscordClient {
                         self.record_delete_rate_limit(channel_id, aggressive, wait)
                             .await;
                         log_delete_retry(
-                            channel_id,
-                            display_name,
-                            message_id,
-                            attempts,
-                            MAX_DELETE_ATTEMPTS,
-                            wait,
+                            DeleteRetryContext {
+                                channel_id,
+                                display_name,
+                                message_id,
+                                attempt: attempts,
+                                max_attempts: MAX_DELETE_ATTEMPTS,
+                                wait_secs: wait,
+                                progress,
+                            },
                             &reason,
-                            progress,
                         );
                         tokio::time::sleep(StdDuration::from_secs_f64(wait)).await;
                     }
@@ -750,28 +766,29 @@ fn is_retryable_delete_status(status: StatusCode) -> bool {
     ) || status.is_server_error()
 }
 
-fn log_delete_retry(
-    channel_id: &str,
-    display_name: &str,
-    message_id: &str,
-    attempt: usize,
-    max_attempts: usize,
-    wait_secs: f64,
-    reason: &str,
-    progress: Option<&ProgressBar>,
-) {
+fn log_delete_retry(context: DeleteRetryContext<'_>, reason: &str) {
     terminal::warn(
         "kcordclient::discord",
         format!(
-            "delete retry {attempt}/{max_attempts} for {channel_id} ({display_name}) on {message_id} after {reason}; waiting {wait_secs:.1}s"
+            "delete retry {}/{} for {} ({}) on {} after {}; waiting {:.1}s",
+            context.attempt,
+            context.max_attempts,
+            context.channel_id,
+            context.display_name,
+            context.message_id,
+            reason,
+            context.wait_secs
         ),
     );
 
-    if let Some(progress) = progress {
+    if let Some(progress) = context.progress {
         set_delete_progress_message(
             progress,
-            display_name,
-            &format!("Retry {attempt}/{max_attempts} in {wait_secs:.1}s"),
+            context.display_name,
+            &format!(
+                "Retry {}/{} in {:.1}s",
+                context.attempt, context.max_attempts, context.wait_secs
+            ),
         );
     }
 }
