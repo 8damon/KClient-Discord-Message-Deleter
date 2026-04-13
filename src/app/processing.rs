@@ -6,7 +6,11 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use tokio::task::JoinSet;
 
 use crate::{
-    checkpoint, discord::DiscordClient, models::OwnedMessage, report::RunReport, state, terminal,
+    checkpoint,
+    discord::{DeleteProgress, DiscordClient},
+    models::OwnedMessage,
+    report::RunReport,
+    state, terminal,
 };
 
 use super::progress::{
@@ -23,6 +27,8 @@ pub(crate) struct ServerProcessContext {
     pub(crate) concurrency: usize,
     pub(crate) report: Arc<RunReport>,
 }
+
+const LIVE_CHECKPOINT_FLUSH_INTERVAL: usize = 25;
 
 pub(crate) async fn process_server_channels(context: ServerProcessContext) -> Result<()> {
     terminal::info(
@@ -373,36 +379,59 @@ async fn process_channel(task: ChannelTask) -> Result<()> {
 
     to_delete.sort_by_key(|message| message.timestamp);
     configure_deletion_bar(&progress, to_delete.len() as u64, display_name, false);
-    let mut deleted_first_pass = Vec::new();
+    let mut unsaved_progress = 0usize;
 
     for chunk in to_delete.chunks(checkpoint::SAVE_INTERVAL) {
-        let batch = task
+        let delete_result = task
             .discord
-            .delete_messages(channel_id, chunk, Some(&progress), task.aggressive_delete)
-            .await
-            .with_context(|| format!("failed deleting messages in {}", display_name))?;
-
-        for message in &batch.deleted {
-            checkpoint.mark_deleted(&message.id);
-        }
-        for skipped in &batch.skipped {
-            checkpoint.mark_deleted(&skipped.message.id);
-            report.record_skip(
+            .delete_messages(
                 channel_id,
-                &skipped.message,
-                skipped.status,
-                &skipped.reason,
-            );
+                display_name,
+                chunk,
+                Some(&progress),
+                task.aggressive_delete,
+                |event| {
+                    match event {
+                        DeleteProgress::Deleted(message) => {
+                            checkpoint.mark_deleted(&message.id);
+                            report.record_deletions(channel_id, "first-pass", &[message]);
+                        }
+                        DeleteProgress::Skipped(skipped) => {
+                            checkpoint.mark_deleted(&skipped.message.id);
+                            report.record_skip(
+                                channel_id,
+                                &skipped.message,
+                                skipped.status,
+                                &skipped.reason,
+                            );
+                        }
+                    }
+
+                    tracker.add_deleted(1);
+                    unsaved_progress += 1;
+                    if unsaved_progress >= LIVE_CHECKPOINT_FLUSH_INTERVAL {
+                        checkpoint.save()?;
+                        unsaved_progress = 0;
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+
+        if let Err(error) = delete_result {
+            checkpoint
+                .save()
+                .with_context(|| format!("failed to flush checkpoint for {}", display_name))?;
+            return Err(error)
+                .with_context(|| format!("failed deleting messages in {}", display_name));
         }
 
         checkpoint
             .save()
             .with_context(|| format!("failed to flush checkpoint for {}", display_name))?;
-        tracker.add_deleted(batch.deleted.len() + batch.skipped.len());
-        deleted_first_pass.extend(batch.deleted);
+        unsaved_progress = 0;
     }
 
-    report.record_deletions(channel_id, "first-pass", &deleted_first_pass);
     checkpoint.remove();
     report.finish_channel(channel_id, "completed");
     progress.finish_with_message(format!("Completed {}", display_name));
@@ -494,37 +523,59 @@ async fn process_prefetched_channel(task: PrefetchedChannelTask) -> Result<()> {
 
     to_delete.sort_by_key(|message| message.timestamp);
     configure_deletion_bar(&progress, to_delete.len() as u64, display_name, false);
-    let mut deleted_first_pass = Vec::new();
+    let mut unsaved_progress = 0usize;
 
     for chunk in to_delete.chunks(checkpoint::SAVE_INTERVAL) {
-        let batch = task
+        let delete_result = task
             .discord
-            .delete_messages(channel_id, chunk, Some(&progress), false)
-            .await
-            .with_context(|| format!("failed deleting messages in {}", display_name))?;
-
-        for message in &batch.deleted {
-            checkpoint.mark_deleted(&message.id);
-        }
-        for skipped in &batch.skipped {
-            checkpoint.mark_deleted(&skipped.message.id);
-            report.record_skip(
+            .delete_messages(
                 channel_id,
-                &skipped.message,
-                skipped.status,
-                &skipped.reason,
-            );
+                display_name,
+                chunk,
+                Some(&progress),
+                false,
+                |event| {
+                    match event {
+                        DeleteProgress::Deleted(message) => {
+                            checkpoint.mark_deleted(&message.id);
+                            report.record_deletions(channel_id, "first-pass", &[message]);
+                        }
+                        DeleteProgress::Skipped(skipped) => {
+                            checkpoint.mark_deleted(&skipped.message.id);
+                            report.record_skip(
+                                channel_id,
+                                &skipped.message,
+                                skipped.status,
+                                &skipped.reason,
+                            );
+                        }
+                    }
+
+                    task.tracker.add_deleted(1);
+                    unsaved_progress += 1;
+                    if unsaved_progress >= LIVE_CHECKPOINT_FLUSH_INTERVAL {
+                        checkpoint.save()?;
+                        unsaved_progress = 0;
+                    }
+                    Ok(())
+                },
+            )
+            .await;
+
+        if let Err(error) = delete_result {
+            checkpoint
+                .save()
+                .with_context(|| format!("failed to flush checkpoint for {}", display_name))?;
+            return Err(error)
+                .with_context(|| format!("failed deleting messages in {}", display_name));
         }
 
         checkpoint
             .save()
             .with_context(|| format!("failed to flush checkpoint for {}", display_name))?;
-        task.tracker
-            .add_deleted(batch.deleted.len() + batch.skipped.len());
-        deleted_first_pass.extend(batch.deleted);
+        unsaved_progress = 0;
     }
 
-    report.record_deletions(channel_id, "first-pass", &deleted_first_pass);
     checkpoint.remove();
     report.finish_channel(channel_id, "completed");
     progress.finish_with_message(format!("Completed {}", display_name));

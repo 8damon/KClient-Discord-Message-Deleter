@@ -27,6 +27,8 @@ const FETCH_PAGE_SIZE: usize = 100;
 const MAX_DELETE_ATTEMPTS: usize = 10;
 const MAX_RATE_LIMIT_RETRIES: usize = 20;
 const HISTORY_SCAN_RETRIES: usize = 2;
+const TRANSIENT_DELETE_BACKOFF_BASE_SECS: f64 = 0.75;
+const TRANSIENT_DELETE_BACKOFF_MAX_SECS: f64 = 12.0;
 
 const DELETE_PACE_START_MS: u64 = 15;
 const DELETE_PACE_FAST_START_MS: u64 = 0;
@@ -37,15 +39,15 @@ const DELETE_PACE_STEP_UP_FACTOR: f64 = 1.8;
 
 const SEARCH_PACE_MS: u64 = 40;
 
-pub struct DeleteBatchResult {
-    pub deleted: Vec<OwnedMessage>,
-    pub skipped: Vec<SkippedDelete>,
-}
-
 pub struct SkippedDelete {
     pub message: OwnedMessage,
     pub status: u16,
     pub reason: String,
+}
+
+pub enum DeleteProgress {
+    Deleted(OwnedMessage),
+    Skipped(SkippedDelete),
 }
 
 pub struct DiscordClient {
@@ -412,16 +414,16 @@ impl DiscordClient {
     pub async fn delete_messages(
         &self,
         channel_id: &str,
+        display_name: &str,
         to_delete: &[OwnedMessage],
         progress: Option<&ProgressBar>,
         aggressive: bool,
-    ) -> Result<DeleteBatchResult> {
+        mut on_progress: impl FnMut(DeleteProgress) -> Result<()>,
+    ) -> Result<()> {
         terminal::info(
             "kcordclient::discord",
             format!("Deleting batch of {} messages", to_delete.len()),
         );
-        let mut deleted = Vec::new();
-        let mut skipped = Vec::new();
 
         for message in to_delete {
             let message_id = &message.id;
@@ -430,18 +432,44 @@ impl DiscordClient {
             let mut rate_limit_retries = 0;
 
             while attempts < MAX_DELETE_ATTEMPTS {
+                attempts += 1;
                 let pace_before_request =
                     self.delete_delay_for_channel(channel_id, aggressive).await;
                 if pace_before_request > 0 {
                     tokio::time::sleep(StdDuration::from_millis(pace_before_request)).await;
                 }
 
-                let response = self.delete(&path).await?;
+                let response = match self.delete(&path).await {
+                    Ok(response) => response,
+                    Err(error) if attempts < MAX_DELETE_ATTEMPTS => {
+                        let wait = transient_delete_backoff_secs(attempts);
+                        self.record_delete_rate_limit(channel_id, aggressive, wait)
+                            .await;
+                        log_delete_retry(
+                            channel_id,
+                            display_name,
+                            message_id,
+                            attempts,
+                            MAX_DELETE_ATTEMPTS,
+                            wait,
+                            &format!("{:#}", error),
+                            progress,
+                        );
+                        tokio::time::sleep(StdDuration::from_secs_f64(wait)).await;
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(anyhow!("failed to delete {message_id}: {:#}", error));
+                    }
+                };
+
                 match response.status() {
                     status if status.is_success() || status == StatusCode::NOT_FOUND => {
-                        deleted.push(message.clone());
+                        let deleted_message = message.clone();
+                        on_progress(DeleteProgress::Deleted(deleted_message))?;
                         if let Some(progress) = progress {
                             progress.inc(1);
+                            set_delete_progress_message(progress, display_name, "Deleting");
                         }
                         self.record_delete_success(channel_id, aggressive).await;
                         break;
@@ -458,8 +486,37 @@ impl DiscordClient {
                                 "rate limit retries exceeded while deleting {message_id}"
                             ));
                         }
+                        log_delete_retry(
+                            channel_id,
+                            display_name,
+                            message_id,
+                            attempts,
+                            MAX_DELETE_ATTEMPTS,
+                            wait,
+                            "rate limited",
+                            progress,
+                        );
                         tokio::time::sleep(StdDuration::from_secs_f64(wait)).await;
-                        attempts += 1;
+                    }
+                    status
+                        if is_retryable_delete_status(status) && attempts < MAX_DELETE_ATTEMPTS =>
+                    {
+                        let body = response.text().await.unwrap_or_default();
+                        let reason = format_http_error(status, &body);
+                        let wait = transient_delete_backoff_secs(attempts);
+                        self.record_delete_rate_limit(channel_id, aggressive, wait)
+                            .await;
+                        log_delete_retry(
+                            channel_id,
+                            display_name,
+                            message_id,
+                            attempts,
+                            MAX_DELETE_ATTEMPTS,
+                            wait,
+                            &reason,
+                            progress,
+                        );
+                        tokio::time::sleep(StdDuration::from_secs_f64(wait)).await;
                     }
                     status => {
                         let body = response.text().await.unwrap_or_default();
@@ -472,13 +529,19 @@ impl DiscordClient {
                                     message_id, channel_id, reason
                                 ),
                             );
-                            skipped.push(SkippedDelete {
+                            let skipped_delete = SkippedDelete {
                                 message: message.clone(),
                                 status: status.as_u16(),
                                 reason,
-                            });
+                            };
+                            on_progress(DeleteProgress::Skipped(SkippedDelete {
+                                message: skipped_delete.message.clone(),
+                                status: skipped_delete.status,
+                                reason: skipped_delete.reason.clone(),
+                            }))?;
                             if let Some(progress) = progress {
                                 progress.inc(1);
+                                set_delete_progress_message(progress, display_name, "Deleting");
                             }
                             break;
                         }
@@ -492,7 +555,7 @@ impl DiscordClient {
             }
         }
 
-        Ok(DeleteBatchResult { deleted, skipped })
+        Ok(())
     }
 
     async fn delete_delay_for_channel(&self, channel_id: &str, aggressive: bool) -> u64 {
@@ -669,4 +732,55 @@ fn format_http_error(status: StatusCode, body: &str) -> String {
     } else {
         format!("{status} {trimmed}")
     }
+}
+
+fn transient_delete_backoff_secs(attempt: usize) -> f64 {
+    let factor = 2_f64.powi((attempt.saturating_sub(1)).min(4) as i32);
+    (TRANSIENT_DELETE_BACKOFF_BASE_SECS * factor).min(TRANSIENT_DELETE_BACKOFF_MAX_SECS)
+}
+
+fn is_retryable_delete_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::REQUEST_TIMEOUT
+            | StatusCode::TOO_EARLY
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    ) || status.is_server_error()
+}
+
+fn log_delete_retry(
+    channel_id: &str,
+    display_name: &str,
+    message_id: &str,
+    attempt: usize,
+    max_attempts: usize,
+    wait_secs: f64,
+    reason: &str,
+    progress: Option<&ProgressBar>,
+) {
+    terminal::warn(
+        "kcordclient::discord",
+        format!(
+            "delete retry {attempt}/{max_attempts} for {channel_id} ({display_name}) on {message_id} after {reason}; waiting {wait_secs:.1}s"
+        ),
+    );
+
+    if let Some(progress) = progress {
+        set_delete_progress_message(
+            progress,
+            display_name,
+            &format!("Retry {attempt}/{max_attempts} in {wait_secs:.1}s"),
+        );
+    }
+}
+
+fn set_delete_progress_message(progress: &ProgressBar, display_name: &str, phase: &str) {
+    let completed = progress.position();
+    let total = progress.length().unwrap_or(0);
+    let remaining = total.saturating_sub(completed);
+    progress.set_message(format!(
+        "{phase} {display_name} | {completed}/{total} done | {remaining} left"
+    ));
 }

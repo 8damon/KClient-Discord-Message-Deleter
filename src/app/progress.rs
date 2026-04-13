@@ -143,7 +143,7 @@ impl ProgressTracker {
         let active = self.active_channels.load(Ordering::Relaxed);
         let fetching = self.fetching_channels.load(Ordering::Relaxed);
         let status = if fetching > 0 {
-            format!("Scanning | Remaining {}", remaining)
+            format!("Scanning channels | {} remaining to classify", remaining)
         } else if deleted > 0 && discovered >= deleted {
             let secs_per_msg = self.started_at.elapsed().as_secs_f64() / deleted as f64;
             let rate = if secs_per_msg > 0.0 {
@@ -152,18 +152,18 @@ impl ProgressTracker {
                 0.0
             };
             format!(
-                "Delete ETA {} | {:.1} msg/s",
+                "Deleting | ETA {} | {:.1} msg/s",
                 format_duration((secs_per_msg * remaining as f64).round() as u64),
                 rate
             )
         } else if discovered > 0 {
-            String::from("Delete ETA pending")
+            String::from("Ready to delete")
         } else {
-            String::from("ETA --:--:--")
+            String::from("Waiting for results")
         };
 
         self.summary.set_message(format!(
-            "Found: {} | Deleted: {} | Remaining: {} | Active: {} | Fetching: {} | {}",
+            "Found {} | Deleted {} | Remaining {} | Active {} | Fetching {} | {}",
             discovered, deleted, remaining, active, fetching, status
         ));
 
@@ -213,7 +213,7 @@ pub(crate) fn configure_deletion_bar(
     retry: bool,
 ) {
     let style = ProgressStyle::with_template(
-        "  {msg:<34.34} [{wide_bar:.cyan/blue}] {pos:>4}/{len:<4} {percent:>3}%  eta {eta_precise}",
+        "  {msg:<60.60} [{wide_bar:.cyan/blue}] {pos:>5}/{len:<5} {percent:>3}%  eta {eta_precise}",
     )
     .expect("valid progress template")
     .progress_chars("=>-");
@@ -221,7 +221,9 @@ pub(crate) fn configure_deletion_bar(
     progress.set_length(total);
     progress.set_position(0);
     let prefix = if retry { "Retrying" } else { "Deleting" };
-    progress.set_message(format!("{prefix} {}", display_name));
+    progress.set_message(format!(
+        "{prefix} {display_name} | 0/{total} done | {total} left"
+    ));
 }
 
 pub(crate) fn format_duration(seconds: u64) -> String {
