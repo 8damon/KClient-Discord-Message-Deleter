@@ -61,10 +61,23 @@ configure_shell_path() {
 }
 
 reload_shell() {
-  if [ -t 0 ] && [ -t 1 ] && [ -n "${SHELL:-}" ]; then
-    printf 'Reloading %s as a login shell so PATH changes apply now...\n' "$SHELL"
-    exec "$SHELL" -l
+  shell_name=$(basename -- "$shell_path")
+
+  if [ ! -t 1 ]; then
+    return
   fi
+
+  case "$shell_name" in
+    fish)
+      printf 'Open a new terminal or run: source %s\n' "$home_dir/.config/fish/config.fish"
+      ;;
+    bash|zsh)
+      printf 'Open a new terminal or run: . %s\n' "$rc_file"
+      ;;
+    *)
+      printf 'Open a new terminal or run: . %s\n' "$rc_file"
+      ;;
+  esac
 }
 
 if [ -z "$home_dir" ]; then
