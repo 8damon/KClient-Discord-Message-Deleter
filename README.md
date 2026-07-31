@@ -19,7 +19,9 @@
 - One-off runs with `--token`
 - Server-wide discovery with checkpointing
 - Timeframe filtering with values like `30m`, `24h`, and `7d`
+- Delete by message type with `--type` (`message`, `links`, `media`, `files`, `videos`)
 - Proxy rotation with `proxy.txt`
+- `--debug` and multi-level `--verbose` logging for troubleshooting and operational transparency
 - Local logs for each run
 - Event-driven watchdogs for delayed deletion of your own messages or uploads
 
@@ -63,6 +65,25 @@ Run once without storing the token:
 kclient --token TOKEN_HERE --delete --channel CHANNEL_ID --tf 24h
 ```
 
+Delete only uploaded media from a server channel within a timeframe:
+
+```bash
+kclient --account myuser --delete --server SERVER_ID --tf 72h --type media
+```
+
+Delete only messages containing links:
+
+```bash
+kclient --account myuser --delete --channel CHANNEL_ID --tf 24h --type links
+```
+
+Increase output detail, and enable debug logs when needed:
+
+```bash
+kclient --account myuser --delete --channel CHANNEL_ID --tf 24h --verbose --verbose
+kclient --account myuser --delete --channel CHANNEL_ID --tf 24h --debug
+```
+
 ## PLATFORM SUPPORT
 
 - Windows is the primary verified platform in this workspace.
@@ -83,6 +104,7 @@ The release binary is written to `target/release/kclient.exe` on Windows and `ta
 - `-h` and `-V` are short options
 - Most options take a value after them. Example: `--server 123456789012345678`
 - Flags without values are switches. Example: `--delete`, `--all`, `--reload`
+- `--verbose` can be repeated (`-v -v`) for progressively more output.
 - Do not type angle brackets. Replace placeholders directly. Use `TOKEN_HERE`, `SERVER_ID`, and `CHANNEL_ID` as examples only.
 
 ## FINDING IDS
@@ -152,6 +174,12 @@ Use proxies from `proxy.txt`:
 kclient --account myuser --delete --server 123456789012345678 --all --dproxy
 ```
 
+Filter deletions by message type while cleaning multiple channels:
+
+```bash
+kclient --account myuser --delete --server SERVER_ID --all --type files
+```
+
 ## WATCHDOGS
 
 Watchdogs run in the background and receive new-message events over one shared Gateway connection per stored account. They do not poll channel history while idle: the worker sleeps until Discord sends an event, a heartbeat is due, a configuration check is due, or the next deletion deadline is reached.
@@ -180,6 +208,8 @@ kclient --stop-watchdog cleanup-words
 ```
 
 Scopes are optional. Without `--server`, `--channel`, or `--dm`, a watchdog is global for the selected account. A server scope covers messages in that server; a channel scope covers just that channel; and a DM scope resolves and stores the DM channel for the selected user.
+
+Watchdog `--type` supports `media` and `message` in current configuration paths. Use `media` to target uploads/attachments and `message` for content-based matching (including word-list mode).
 
 `--default on` deletes matching messages unless `--off-flag` is present. `--default off` reverses marker semantics: matching messages are deleted only when the marker is present. For `--type message`, a word-list match is always required in either default mode. Matching is case-insensitive literal substring matching. `--word-list` may be repeated and supports `.txt`, `.json`, `.toml`, `.yaml`, and `.yml`; structured formats accept either a string array or `{ "words": ["..."] }`.
 
