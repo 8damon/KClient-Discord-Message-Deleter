@@ -38,6 +38,72 @@ const DELETE_PACE_STEP_DOWN_MS: u64 = 5;
 const DELETE_PACE_STEP_UP_FACTOR: f64 = 1.8;
 
 const SEARCH_PACE_MS: u64 = 40;
+const GUILD_SEARCH_PREFETCH_LIMIT: usize = 75_000;
+
+fn is_video_attachment(attachment: &crate::models::Attachment) -> bool {
+    if let Some(content_type) = attachment.content_type.as_deref() {
+        if content_type.to_ascii_lowercase().starts_with("video/") {
+            return true;
+        }
+    }
+
+    let Some(filename) = attachment.filename.as_deref() else {
+        return false;
+    };
+
+    let extension = filename
+        .rsplit('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "mp4"
+            | "mov"
+            | "webm"
+            | "mkv"
+            | "avi"
+            | "m4v"
+            | "flv"
+            | "gifv"
+            | "m4p"
+            | "mpeg"
+            | "mpg"
+            | "m2ts"
+            | "wmv"
+            | "ogv"
+            | "3gp"
+            | "ts",
+    )
+}
+
+fn content_has_link(content: &str) -> bool {
+    let lowered = content.to_ascii_lowercase();
+    lowered.contains("http://")
+        || lowered.contains("https://")
+        || lowered.contains("www.")
+        || lowered.contains("discordapp.com")
+        || lowered.contains("discord.com")
+}
+
+fn owned_message(
+    id: String,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    content: String,
+    attachments: &[crate::models::Attachment],
+) -> OwnedMessage {
+    let has_video = attachments.iter().any(is_video_attachment);
+    let has_media = !attachments.is_empty();
+    OwnedMessage {
+        id,
+        timestamp,
+        content: content.clone(),
+        has_link: content_has_link(&content),
+        has_media,
+        has_file: has_media && !attachments.iter().all(is_video_attachment),
+        has_video,
+    }
+}
 
 pub struct SkippedDelete {
     pub message: OwnedMessage,
@@ -146,6 +212,11 @@ impl DiscordClient {
         self.get_json(&format!("/channels/{channel_id}")).await
     }
 
+    pub async fn message(&self, channel_id: &str, message_id: &str) -> Result<Message> {
+        self.get_json(&format!("/channels/{channel_id}/messages/{message_id}"))
+            .await
+    }
+
     pub async fn guild_channels(&self, guild_id: &str) -> Result<Vec<Channel>> {
         self.get_json(&format!("/guilds/{guild_id}/channels")).await
     }
@@ -217,6 +288,7 @@ impl DiscordClient {
         let cutoff_time = cutoff.unwrap_or_else(|| Utc::now() - Duration::days(365 * 100));
         let mut grouped = HashMap::<String, Vec<OwnedMessage>>::new();
         let mut seen_ids = HashSet::new();
+        let mut seen_count = 0usize;
         let mut cursor: Option<String> = None;
 
         loop {
@@ -248,11 +320,19 @@ impl DiscordClient {
                 if !seen_ids.insert(message.id.clone()) {
                     continue;
                 }
-                grouped.entry(channel_id).or_default().push(OwnedMessage {
-                    id: message.id,
-                    timestamp: message.timestamp,
-                    content: message.content,
-                });
+                seen_count += 1;
+                if seen_count > GUILD_SEARCH_PREFETCH_LIMIT {
+                    return Err(anyhow!(
+                        "guild search prefetch cap exceeded (>{GUILD_SEARCH_PREFETCH_LIMIT})"
+                    ));
+                }
+                let attachments = &message.attachments;
+                grouped.entry(channel_id).or_default().push(owned_message(
+                    message.id,
+                    message.timestamp,
+                    message.content,
+                    attachments,
+                ));
             }
 
             on_progress(SearchProgress {
@@ -315,11 +395,7 @@ impl DiscordClient {
                     Some(m)
                 })
                 .filter(|m| seen_ids.insert(m.id.clone()))
-                .map(|m| OwnedMessage {
-                    id: m.id,
-                    timestamp: m.timestamp,
-                    content: m.content,
-                })
+                .map(|m| owned_message(m.id, m.timestamp, m.content, &m.attachments))
                 .collect::<Vec<_>>();
 
             results.extend(batch);
@@ -372,11 +448,12 @@ impl DiscordClient {
                 }
 
                 if message.author.id == my_id {
-                    messages.push(OwnedMessage {
-                        id: message.id.clone(),
-                        timestamp: message.timestamp,
-                        content: message.content.clone(),
-                    });
+                    messages.push(owned_message(
+                        message.id.clone(),
+                        message.timestamp,
+                        message.content.clone(),
+                        &message.attachments,
+                    ));
                 }
             }
 

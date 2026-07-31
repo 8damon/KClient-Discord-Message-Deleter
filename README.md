@@ -21,6 +21,7 @@
 - Timeframe filtering with values like `30m`, `24h`, and `7d`
 - Proxy rotation with `proxy.txt`
 - Local logs for each run
+- Event-driven watchdogs for delayed deletion of your own messages or uploads
 
 ## QUICK START
 
@@ -150,6 +151,39 @@ Use proxies from `proxy.txt`:
 ```bash
 kclient --account myuser --delete --server 123456789012345678 --all --dproxy
 ```
+
+## WATCHDOGS
+
+Watchdogs run in the background and receive new-message events over one shared Gateway connection per stored account. They do not poll channel history while idle: the worker sleeps until Discord sends an event, a heartbeat is due, a configuration check is due, or the next deletion deadline is reached.
+
+Save a global media watchdog. This deletes your own uploads one hour after sending, except when the message text includes `.`:
+
+```bash
+kclient --set-watchdog --save-watchdog media-expiry \
+  --account myuser --type media --tf 1h --off-flag "." --default on
+kclient --start-watchdog media-expiry
+```
+
+Save a word-list watchdog scoped to one server:
+
+```bash
+kclient --set-watchdog --save-watchdog cleanup-words \
+  --account myuser --server SERVER_ID --type message --tf 5m \
+  --off-flag "dnd" --word-list examples/watchdog-wordlist.txt --default on
+kclient --start-watchdog cleanup-words
+```
+
+Stop a watchdog and discard its queued, not-yet-deleted messages:
+
+```bash
+kclient --stop-watchdog cleanup-words
+```
+
+Scopes are optional. Without `--server`, `--channel`, or `--dm`, a watchdog is global for the selected account. A server scope covers messages in that server; a channel scope covers just that channel; and a DM scope resolves and stores the DM channel for the selected user.
+
+`--default on` deletes matching messages unless `--off-flag` is present. `--default off` reverses marker semantics: matching messages are deleted only when the marker is present. For `--type message`, a word-list match is always required in either default mode. Matching is case-insensitive literal substring matching. `--word-list` may be repeated and supports `.txt`, `.json`, `.toml`, `.yaml`, and `.yml`; structured formats accept either a string array or `{ "words": ["..."] }`.
+
+Media means a message with at least one uploaded attachment. Before deleting a due message, KCLIENT retrieves it again and re-evaluates its marker and filter, so adding an opt-out marker before expiry prevents deletion.
 
 ## PROXY FORMAT
 

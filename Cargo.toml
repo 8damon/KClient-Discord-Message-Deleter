@@ -20,12 +20,18 @@ chrono = { version = "0.4", features = ["serde"] }
 indicatif = "0.17"
 console = "0.15"
 rusqlite = { version = "0.32", features = ["bundled"] }
+futures-util = "0.3"
+libc = "0.2"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+toml = "0.8"
+serde_yaml = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security_Cryptography",
     "Win32_System_Memory",
+    "Win32_System_Threading",
 ] }
 
 [profile.dev]

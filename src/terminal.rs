@@ -11,6 +11,8 @@ use crate::state;
 
 static PROGRESS_ROOT: OnceLock<Mutex<Option<Arc<MultiProgress>>>> = OnceLock::new();
 static RATE_LIMIT_GRAPH: OnceLock<Mutex<RateLimitGraph>> = OnceLock::new();
+static VERBOSITY: OnceLock<Mutex<u8>> = OnceLock::new();
+static DEBUG_ENABLED: OnceLock<Mutex<bool>> = OnceLock::new();
 
 struct RateLimitGraph {
     bar: Option<ProgressBar>,
@@ -117,6 +119,32 @@ pub fn set_progress_root(progress_root: Option<Arc<MultiProgress>>) {
     }
 }
 
+pub fn set_verbosity(level: u8) {
+    let slot = VERBOSITY.get_or_init(|| Mutex::new(0));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = level;
+    }
+}
+
+pub fn set_debug(enabled: bool) {
+    let slot = DEBUG_ENABLED.get_or_init(|| Mutex::new(false));
+    if let Ok(mut guard) = slot.lock() {
+        *guard = enabled;
+    }
+}
+
+pub fn verbose(level: u8, target: &str, message: impl AsRef<str>) {
+    if current_verbosity() >= level {
+        emit("VERB", Style::new().blue(), target, message.as_ref());
+    }
+}
+
+pub fn debug(target: &str, message: impl AsRef<str>) {
+    if is_debug_enabled() {
+        emit("DEBUG", Style::new().magenta(), target, message.as_ref());
+    }
+}
+
 pub fn info(target: &str, message: impl AsRef<str>) {
     emit("INFO", Style::new().green(), target, message.as_ref());
 }
@@ -176,6 +204,21 @@ fn emit(level: &str, level_style: Style, target: &str, message: &str) {
     if !print_via_progress(&rendered_line) {
         println!("{}", rendered_line);
     }
+}
+
+fn current_verbosity() -> u8 {
+    VERBOSITY
+        .get()
+        .and_then(|slot| slot.lock().ok())
+        .map(|guard| *guard)
+        .unwrap_or(0)
+}
+
+fn is_debug_enabled() -> bool {
+    DEBUG_ENABLED
+        .get()
+        .and_then(|slot| slot.lock().ok())
+        .is_some_and(|guard| *guard)
 }
 
 fn print_via_progress(line: &str) -> bool {

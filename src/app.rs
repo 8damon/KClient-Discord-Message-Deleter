@@ -1,5 +1,6 @@
 mod accounts;
 mod cli;
+mod inspect;
 mod processing;
 mod progress;
 mod targets;
@@ -13,16 +14,16 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use chrono::Local;
-use clap::Parser;
 
 use crate::{
-    args::Args,
+    args::parse_cli,
     checkpoint,
     discord::DiscordClient,
     paths, proxy,
     report::RunReport,
     state, storage, terminal,
     timeframe::{describe_timeframe, resolve_cutoff},
+    watchdog,
 };
 
 use self::{
@@ -31,7 +32,9 @@ use self::{
         resolve_token_for_cli,
     },
     cli::{confirm_deletion, ensure_concurrency, ensure_delete_mode, print_cli_help},
-    processing::{process_channels, process_server_channels, ServerProcessContext},
+    processing::{
+        process_channels, process_server_channels, ChannelProcessContext, ServerProcessContext,
+    },
     targets::{resolve_channels, resolve_target, TargetKind},
 };
 
@@ -43,7 +46,32 @@ pub async fn run() -> Result<()> {
         return print_cli_help();
     }
 
-    let args = Args::parse();
+    let args = parse_cli();
+    terminal::set_verbosity(args.verbose);
+    terminal::set_debug(args.debug);
+    terminal::verbose(
+        1,
+        "kcordclient::app",
+        format!(
+            "starting run: delete={} add_account={} remove_account={} uninstall={}",
+            args.delete, args.add_account, args.remove_account, args.uninstall
+        ),
+    );
+    terminal::verbose(
+        1,
+        "kcordclient::app",
+        format!(
+            "verbosity={} debug={}",
+            args.verbose,
+            if args.debug { "on" } else { "off" }
+        ),
+    );
+    if inspect::handle_command(&args)? {
+        return Ok(());
+    }
+    if watchdog::handle_command(&args).await? {
+        return Ok(());
+    }
     if args.uninstall {
         return uninstall_local_state();
     }
@@ -66,6 +94,10 @@ pub async fn run() -> Result<()> {
     }
 
     let (token, account_label) = resolve_token_for_cli(&args)?;
+    terminal::debug(
+        "kcordclient::app",
+        format!("resolved account label: {:?}", account_label),
+    );
     let discord = Arc::new(build_discord_client(
         &token,
         args.dproxy,
@@ -77,18 +109,61 @@ pub async fn run() -> Result<()> {
         "kcordclient::app",
         format!("logged in as {}", format_account_identity(&me)),
     );
+    terminal::debug(
+        "kcordclient::app",
+        format!("resolved user id {} from /users/@me", me.id),
+    );
 
     if let Some(label) = account_label {
         terminal::info(
             "kcordclient::app",
             format!("selected stored account {}", label),
         );
+        terminal::verbose(
+            1,
+            "kcordclient::app",
+            format!("using account selector {}", label),
+        );
     }
 
     let mut target = resolve_target(&discord, &args).await?;
+    terminal::debug(
+        "kcordclient::app",
+        format!(
+            "resolved target kind={} id={}",
+            match target.kind {
+                TargetKind::Server => "server",
+                TargetKind::Channel => "channel",
+                TargetKind::Dm => "dm",
+            },
+            target.id
+        ),
+    );
     let cutoff = resolve_cutoff(args.all, args.tf.as_deref())?;
+    terminal::verbose(
+        1,
+        "kcordclient::app",
+        format!("resolved timeframe all={} cutoff={:?}", args.all, cutoff),
+    );
     let timeframe_desc = describe_timeframe(args.all, args.tf.as_deref());
     let channels = resolve_channels(&discord, &target).await?;
+    terminal::verbose(
+        1,
+        "kcordclient::app",
+        format!(
+            "discovered {} target channel(s) for {}",
+            channels.len(),
+            target.name
+        ),
+    );
+    terminal::verbose(
+        2,
+        "kcordclient::app",
+        format!(
+            "using delete-type filter {:?} with {} workers",
+            args.r#type, args.concurrency
+        ),
+    );
 
     if matches!(target.kind, TargetKind::Dm) {
         if let Some((_, display_name)) = channels.first() {
@@ -111,21 +186,23 @@ pub async fn run() -> Result<()> {
                 channels,
                 cutoff,
                 concurrency: args.concurrency,
+                delete_type: args.r#type,
                 report: report.clone(),
             })
             .await?;
         }
         _ => {
             let aggressive_delete = channels.len() == 1;
-            process_channels(
+            process_channels(ChannelProcessContext {
                 discord,
-                &me.id,
                 channels,
                 cutoff,
-                args.concurrency,
+                concurrency: args.concurrency,
+                my_id: me.id.clone(),
                 aggressive_delete,
-                report.clone(),
-            )
+                delete_type: args.r#type,
+                report: report.clone(),
+            })
             .await?;
         }
     }
@@ -217,6 +294,7 @@ fn write_log(report: &RunReport) -> Result<PathBuf> {
 
 fn uninstall_local_state() -> Result<()> {
     let mut removed_any = false;
+    storage::stop_all_watchdogs().ok();
     let cleared_secrets = storage::cleanup_account_secrets().unwrap_or(0);
 
     if cleared_secrets > 0 {

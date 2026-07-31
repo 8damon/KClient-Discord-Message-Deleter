@@ -28,6 +28,36 @@ pub struct StoredAccountToken {
     pub token: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct StoredWatchdog {
+    pub name: String,
+    pub account_id: i64,
+    pub scope_kind: String,
+    pub scope_id: Option<String>,
+    pub kind: String,
+    pub delay_seconds: i64,
+    pub off_flag: String,
+    pub default_on: bool,
+    pub words: Vec<String>,
+    pub requested_running: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WatchdogCandidate {
+    pub watchdog_name: String,
+    pub channel_id: String,
+    pub message_id: String,
+    pub due_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WatchdogRunner {
+    pub account_id: i64,
+    pub pid: i64,
+    pub heartbeat_at: i64,
+    pub last_error: Option<String>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct PersistedCheckpoint {
     channel_id: String,
@@ -40,6 +70,16 @@ struct PersistedCheckpoint {
 struct PersistedMessage {
     id: String,
     timestamp: DateTime<Utc>,
+    #[serde(default)]
+    content: String,
+    #[serde(default)]
+    has_link: bool,
+    #[serde(default)]
+    has_media: bool,
+    #[serde(default)]
+    has_file: bool,
+    #[serde(default)]
+    has_video: bool,
 }
 
 pub fn initialize() -> Result<()> {
@@ -80,6 +120,35 @@ pub fn initialize() -> Result<()> {
             deleted_ids_json TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             PRIMARY KEY (channel_id, cutoff_key)
+        );
+        CREATE TABLE IF NOT EXISTS watchdogs (
+            name TEXT PRIMARY KEY,
+            account_id INTEGER NOT NULL,
+            scope_kind TEXT NOT NULL,
+            scope_id TEXT,
+            kind TEXT NOT NULL,
+            delay_seconds INTEGER NOT NULL,
+            off_flag TEXT NOT NULL,
+            default_on INTEGER NOT NULL,
+            words_json TEXT NOT NULL,
+            requested_running INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS watchdog_candidates (
+            watchdog_name TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            due_at INTEGER NOT NULL,
+            PRIMARY KEY (watchdog_name, channel_id, message_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_watchdog_candidates_due
+            ON watchdog_candidates (due_at);
+        CREATE TABLE IF NOT EXISTS watchdog_runners (
+            account_id INTEGER PRIMARY KEY,
+            pid INTEGER NOT NULL,
+            heartbeat_at INTEGER NOT NULL,
+            last_error TEXT
         );
         ",
     )
@@ -200,6 +269,285 @@ pub fn cleanup_account_secrets() -> Result<usize> {
     Ok(removed)
 }
 
+pub fn save_watchdog(watchdog: &StoredWatchdog) -> Result<()> {
+    initialize()?;
+    let words_json =
+        serde_json::to_string(&watchdog.words).context("failed to encode watchdog word list")?;
+    let now = Local::now().to_rfc3339();
+    let conn = open()?;
+    conn.execute(
+        "
+        INSERT INTO watchdogs (
+            name, account_id, scope_kind, scope_id, kind, delay_seconds,
+            off_flag, default_on, words_json, requested_running, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10, ?10)
+        ON CONFLICT(name) DO UPDATE SET
+            account_id = excluded.account_id,
+            scope_kind = excluded.scope_kind,
+            scope_id = excluded.scope_id,
+            kind = excluded.kind,
+            delay_seconds = excluded.delay_seconds,
+            off_flag = excluded.off_flag,
+            default_on = excluded.default_on,
+            words_json = excluded.words_json,
+            updated_at = excluded.updated_at
+        ",
+        params![
+            watchdog.name,
+            watchdog.account_id,
+            watchdog.scope_kind,
+            watchdog.scope_id,
+            watchdog.kind,
+            watchdog.delay_seconds,
+            watchdog.off_flag,
+            i64::from(watchdog.default_on),
+            words_json,
+            now,
+        ],
+    )
+    .context("failed to save watchdog")?;
+    Ok(())
+}
+
+pub fn load_watchdog(name: &str) -> Result<Option<StoredWatchdog>> {
+    initialize()?;
+    let conn = open()?;
+    conn.query_row(
+        "
+        SELECT name, account_id, scope_kind, scope_id, kind, delay_seconds,
+               off_flag, default_on, words_json, requested_running
+        FROM watchdogs WHERE name = ?1
+        ",
+        params![name],
+        map_watchdog,
+    )
+    .optional()
+    .context("failed to load watchdog")
+}
+
+pub fn list_watchdogs() -> Result<Vec<StoredWatchdog>> {
+    initialize()?;
+    let conn = open()?;
+    let mut stmt = conn.prepare(
+        "
+        SELECT name, account_id, scope_kind, scope_id, kind, delay_seconds,
+               off_flag, default_on, words_json, requested_running
+        FROM watchdogs ORDER BY name
+        ",
+    )?;
+    let result = stmt
+        .query_map([], map_watchdog)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("failed to list watchdogs");
+    result
+}
+
+pub fn active_watchdogs_for_account(account_id: i64) -> Result<Vec<StoredWatchdog>> {
+    initialize()?;
+    let conn = open()?;
+    let mut stmt = conn.prepare(
+        "
+        SELECT name, account_id, scope_kind, scope_id, kind, delay_seconds,
+               off_flag, default_on, words_json, requested_running
+        FROM watchdogs WHERE account_id = ?1 AND requested_running = 1
+        ORDER BY name
+        ",
+    )?;
+    let result = stmt
+        .query_map(params![account_id], map_watchdog)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("failed to load active watchdogs");
+    result
+}
+
+pub fn set_watchdog_running(name: &str, running: bool) -> Result<StoredWatchdog> {
+    initialize()?;
+    let conn = open()?;
+    let changed = conn.execute(
+        "UPDATE watchdogs SET requested_running = ?2, updated_at = ?3 WHERE name = ?1",
+        params![name, i64::from(running), Local::now().to_rfc3339()],
+    )?;
+    if changed == 0 {
+        return Err(anyhow!("no saved watchdog named `{name}`"));
+    }
+    load_watchdog(name)?.ok_or_else(|| anyhow!("saved watchdog `{name}` disappeared"))
+}
+
+pub fn delete_watchdog(name: &str) -> Result<()> {
+    initialize()?;
+    let conn = open()?;
+    let changed = conn.execute("DELETE FROM watchdogs WHERE name = ?1", params![name])?;
+    if changed == 0 {
+        return Err(anyhow!("no saved watchdog named `{name}`"));
+    }
+    conn.execute(
+        "DELETE FROM watchdog_candidates WHERE watchdog_name = ?1",
+        params![name],
+    )?;
+    Ok(())
+}
+
+pub fn queue_watchdog_candidates(candidates: &[WatchdogCandidate]) -> Result<()> {
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    initialize()?;
+    let mut conn = open()?;
+    let tx = conn.transaction()?;
+    {
+        let mut statement = tx.prepare_cached(
+            "
+            INSERT INTO watchdog_candidates (watchdog_name, channel_id, message_id, due_at)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(watchdog_name, channel_id, message_id) DO UPDATE SET due_at = excluded.due_at
+            ",
+        )?;
+        for candidate in candidates {
+            statement.execute(params![
+                candidate.watchdog_name,
+                candidate.channel_id,
+                candidate.message_id,
+                candidate.due_at
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn remove_watchdog_candidate(name: &str, channel_id: &str, message_id: &str) -> Result<()> {
+    initialize()?;
+    open()?.execute(
+        "DELETE FROM watchdog_candidates WHERE watchdog_name = ?1 AND channel_id = ?2 AND message_id = ?3",
+        params![name, channel_id, message_id],
+    )?;
+    Ok(())
+}
+
+pub fn remove_watchdog_candidates(name: &str) -> Result<()> {
+    initialize()?;
+    open()?.execute(
+        "DELETE FROM watchdog_candidates WHERE watchdog_name = ?1",
+        params![name],
+    )?;
+    Ok(())
+}
+
+pub fn reschedule_watchdog_candidate(
+    name: &str,
+    channel_id: &str,
+    message_id: &str,
+    due_at: i64,
+) -> Result<()> {
+    initialize()?;
+    open()?.execute(
+        "
+        UPDATE watchdog_candidates SET due_at = ?4
+        WHERE watchdog_name = ?1 AND channel_id = ?2 AND message_id = ?3
+        ",
+        params![name, channel_id, message_id, due_at],
+    )?;
+    Ok(())
+}
+
+pub fn stop_all_watchdogs() -> Result<()> {
+    initialize()?;
+    let conn = open()?;
+    conn.execute("UPDATE watchdogs SET requested_running = 0", [])?;
+    conn.execute("DELETE FROM watchdog_candidates", [])?;
+    Ok(())
+}
+
+pub fn due_watchdog_candidates(now: i64) -> Result<Vec<WatchdogCandidate>> {
+    initialize()?;
+    let conn = open()?;
+    let mut stmt = conn.prepare(
+        "
+        SELECT watchdog_name, channel_id, message_id, due_at
+        FROM watchdog_candidates WHERE due_at <= ?1 ORDER BY due_at LIMIT 100
+        ",
+    )?;
+    let result = stmt
+        .query_map(params![now], |row| {
+            Ok(WatchdogCandidate {
+                watchdog_name: row.get(0)?,
+                channel_id: row.get(1)?,
+                message_id: row.get(2)?,
+                due_at: row.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("failed to load due watchdog candidates");
+    result
+}
+
+pub fn next_watchdog_due_at() -> Result<Option<i64>> {
+    initialize()?;
+    open()?
+        .query_row("SELECT MIN(due_at) FROM watchdog_candidates", [], |row| {
+            row.get(0)
+        })
+        .context("failed to load next watchdog due time")
+}
+
+pub fn update_watchdog_runner(account_id: i64, pid: u32, last_error: Option<&str>) -> Result<()> {
+    initialize()?;
+    open()?.execute(
+        "
+        INSERT INTO watchdog_runners (account_id, pid, heartbeat_at, last_error)
+        VALUES (?1, ?2, ?3, ?4)
+        ON CONFLICT(account_id) DO UPDATE SET
+            pid = excluded.pid, heartbeat_at = excluded.heartbeat_at, last_error = excluded.last_error
+        ",
+        params![account_id, i64::from(pid), Utc::now().timestamp(), last_error],
+    )?;
+    Ok(())
+}
+
+pub fn runner_is_fresh(account_id: i64, max_age_secs: i64) -> Result<bool> {
+    initialize()?;
+    let heartbeat = open()?
+        .query_row(
+            "SELECT heartbeat_at FROM watchdog_runners WHERE account_id = ?1",
+            params![account_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()?;
+    Ok(heartbeat.is_some_and(|value| value >= Utc::now().timestamp() - max_age_secs))
+}
+
+pub fn clear_watchdog_runner(account_id: i64) -> Result<()> {
+    initialize()?;
+    open()?.execute(
+        "DELETE FROM watchdog_runners WHERE account_id = ?1",
+        params![account_id],
+    )?;
+    Ok(())
+}
+
+pub fn list_watchdog_runners() -> Result<Vec<WatchdogRunner>> {
+    initialize()?;
+    let conn = open()?;
+    let mut stmt = conn.prepare(
+        "
+        SELECT account_id, pid, heartbeat_at, last_error
+        FROM watchdog_runners ORDER BY account_id
+        ",
+    )?;
+    let result = stmt
+        .query_map([], |row| {
+            Ok(WatchdogRunner {
+                account_id: row.get(0)?,
+                pid: row.get(1)?,
+                heartbeat_at: row.get(2)?,
+                last_error: row.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("failed to list watchdog runners");
+    result
+}
+
 pub fn upsert_checkpoint(
     channel_id: &str,
     cutoff_key: &str,
@@ -215,6 +563,11 @@ pub fn upsert_checkpoint(
             .map(|message| PersistedMessage {
                 id: message.id.clone(),
                 timestamp: message.timestamp,
+                content: message.content.clone(),
+                has_link: message.has_link,
+                has_media: message.has_media,
+                has_file: message.has_file,
+                has_video: message.has_video,
             })
             .collect(),
         deleted_ids: deleted_ids.to_vec(),
@@ -277,7 +630,11 @@ pub fn load_checkpoint(
         .map(|message| OwnedMessage {
             id: message.id,
             timestamp: message.timestamp,
-            content: String::new(),
+            content: message.content,
+            has_link: message.has_link,
+            has_media: message.has_media,
+            has_file: message.has_file,
+            has_video: message.has_video,
         })
         .collect();
     let deleted_ids = serde_json::from_str::<Vec<String>>(&deleted_json)
@@ -329,6 +686,25 @@ fn map_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredAccount> {
     })
 }
 
+fn map_watchdog(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredWatchdog> {
+    let words_json: String = row.get(8)?;
+    let words = serde_json::from_str(&words_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(8, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(StoredWatchdog {
+        name: row.get(0)?,
+        account_id: row.get(1)?,
+        scope_kind: row.get(2)?,
+        scope_id: row.get(3)?,
+        kind: row.get(4)?,
+        delay_seconds: row.get(5)?,
+        off_flag: row.get(6)?,
+        default_on: row.get::<_, i64>(7)? != 0,
+        words,
+        requested_running: row.get::<_, i64>(9)? != 0,
+    })
+}
+
 fn matches_selector(account: &StoredAccount, selector: &str) -> bool {
     account.user_id.eq_ignore_ascii_case(selector)
         || account.username.eq_ignore_ascii_case(selector)
@@ -371,6 +747,26 @@ fn load_token_blob(account_id: i64) -> Result<Option<Vec<u8>>> {
     )
     .optional()
     .context("failed to fetch account token")
+}
+
+pub fn resolve_account_by_id(account_id: i64) -> Result<StoredAccountToken> {
+    initialize()?;
+    let conn = open()?;
+    let account = conn
+        .query_row(
+            "
+            SELECT id, user_id, username, display_name, created_at, last_used_at
+            FROM accounts WHERE id = ?1
+            ",
+            params![account_id],
+            map_account,
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("watchdog account {account_id} no longer exists"))?;
+    let token_blob = load_token_blob(account.id)?
+        .ok_or_else(|| anyhow!("watchdog account {} has no token blob", account.user_id))?;
+    let token = secure::unprotect_string(&account.user_id, &token_blob)?;
+    Ok(StoredAccountToken { account, token })
 }
 
 fn mark_account_used(account_id: i64) -> Result<()> {

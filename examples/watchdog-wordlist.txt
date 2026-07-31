@@ -1,0 +1,5 @@
+# One case-insensitive word or phrase per line.
+# Lines beginning with # are comments.
+spoiler
+temporary
+remove later

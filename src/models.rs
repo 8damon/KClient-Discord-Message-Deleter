@@ -38,10 +38,24 @@ pub struct User {
 #[derive(Deserialize, Debug)]
 pub struct Message {
     pub id: String,
+    #[serde(default)]
     pub channel_id: Option<String>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
     pub author: Author,
     pub timestamp: DateTime<Utc>,
+    #[serde(default)]
     pub content: String,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Attachment {
+    #[serde(default)]
+    pub filename: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -55,6 +69,14 @@ pub struct OwnedMessage {
     pub timestamp: DateTime<Utc>,
     #[serde(default)]
     pub content: String,
+    #[serde(default)]
+    pub has_link: bool,
+    #[serde(default)]
+    pub has_media: bool,
+    #[serde(default)]
+    pub has_file: bool,
+    #[serde(default)]
+    pub has_video: bool,
 }
 
 #[derive(Deserialize, Debug)]

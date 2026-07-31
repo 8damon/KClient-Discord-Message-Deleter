@@ -13,6 +13,7 @@ mod storage;
 mod terminal;
 mod timeframe;
 mod token;
+mod watchdog;
 
 pub async fn entry() -> anyhow::Result<()> {
     app::run().await

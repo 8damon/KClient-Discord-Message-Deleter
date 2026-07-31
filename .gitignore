@@ -1,6 +1,10 @@
 Cargo.lock
 .env
 /proxy.txt
+.DS_Store
+*.sqlite
+*.sqlite3
+*.log
 
 /target/
 /target-*/
