@@ -31,7 +31,9 @@ use self::{
         add_account_from_args, format_account_identity, remove_account_from_args,
         resolve_token_for_cli,
     },
-    cli::{confirm_deletion, ensure_concurrency, ensure_delete_mode, print_cli_help},
+    cli::{
+        confirm_deletion, ensure_concurrency, ensure_delete_mode, print_cli_help, print_help_token,
+    },
     processing::{
         process_channels, process_server_channels, ChannelProcessContext, ServerProcessContext,
     },
@@ -66,6 +68,9 @@ pub async fn run() -> Result<()> {
             if args.debug { "on" } else { "off" }
         ),
     );
+    if args.help_token {
+        return print_help_token();
+    }
     if inspect::handle_command(&args)? {
         return Ok(());
     }

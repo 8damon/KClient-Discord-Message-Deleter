@@ -23,7 +23,7 @@ pub enum WatchdogDefault {
     author,
     version,
     about = "kcordclient - Discord message deletion client",
-    after_help = "Examples:\n  kclient --add-account --token TOKEN_HERE\n  kclient --list-accounts\n  kclient stat                                  # compact local status\n  kclient --account myuser --delete --channel CHANNEL_ID --tf 24h\n  kclient --account myuser --delete --channel CHANNEL_ID --tf 24h -v -v\n  kclient --account myuser --delete --channel CHANNEL_ID --tf 24h --verbose --debug\n  kclient --account myuser --delete --channel CHANNEL_ID --tf 24h --debug\n  kclient wd                                    # guided watchdog setup\n  kclient --set-watchdog --save-watchdog media-expiry --account myuser --type media --tf 1hr --off-flag .\n  kclient --edit-watchdog media-expiry --account myuser --type media --tf 2h --off-flag .\n  kclient --delete --type links --channel CHANNEL_ID --tf 24h\n  kclient wd list\n  kclient wd status\n  kclient wd delete media-expiry\n  kclient --list-logs\n\nWatchdogs are global when no --server, --channel, or --dm scope is supplied."
+    after_help = "Examples:\n  kclient --add-account --token TOKEN_HERE\n  kclient --account myuser --delete --channel CHANNEL_ID --tf 24h --type links\n  kclient --help-token\n  kclient --set-watchdog --save-watchdog media-expiry --account myuser --type media --tf 1hr\n\nWatchdog config commands are available via `kclient wd` shortcuts.\nUse `kclient --help-token` for token setup details."
 )]
 pub struct Args {
     #[arg(long, action = ArgAction::SetTrue, help = "Run a delete job")]
@@ -55,6 +55,9 @@ pub struct Args {
 
     #[arg(long, help = "Discord token for add-account or one-off delete runs")]
     pub token: Option<String>,
+
+    #[arg(long = "help-token", action = ArgAction::SetTrue, help = "Show how to obtain a Discord token")]
+    pub help_token: bool,
 
     #[arg(
         long,
@@ -197,6 +200,7 @@ fn normalize_shortcuts(args: Vec<OsString>) -> Vec<OsString> {
     };
     let replacement = match shortcut {
         "stat" => Some(vec!["--stat"]),
+        "help-token" => Some(vec!["--help-token"]),
         "wd" | "watchdog" => match args.get(2).and_then(|value| value.to_str()) {
             None | Some("help") => Some(vec!["--set", "watchdog"]),
             Some("set") => Some(vec!["--set", "watchdog"]),
